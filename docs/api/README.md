@@ -294,3 +294,62 @@ Dos migraciones, en orden, una vez por base (local y Tiger Cloud). La 003 se pue
 psql "$DATABASE_URL" -f backend/db/migrations/002_recomendaciones.sql
 psql "$DATABASE_URL" -f backend/db/migrations/003_recomendaciones_tablas.sql
 ```
+
+---
+
+## Promociones que se aplican (migración 004)
+
+Aceptar una recomendación de **promoción** ahora crea la promoción real en `promotions`, solo para esa tienda y ese producto:
+
+- La sugerencia trae `descuento_pct`, `fecha_inicio` y `fecha_fin` (perecederos: 3 días; el resto: 7).
+- **Editar** acepta `{ descuento_pct, fecha_inicio, fecha_fin }`; **Agregar** (gerente) también.
+- Al **aceptar** se crea `PR-WEB-<id>` y la recomendación guarda `aplicado_id`. Reposición y precio también guardan el id del pedido o precio creado.
+- `GET /api/tiendas/S001/promociones?vigentes=1` lista las promociones de la tienda: las propias (`alcance: "tienda"`) y las de cadena del dataset que le aplican (`alcance: "cadena"`).
+
+## Base de rivales (migración 005)
+
+Schema `rivales` en la misma base: se puede borrar y recargar sin tocar lo de Otzo (`DROP SCHEMA rivales CASCADE`).
+
+| Tabla | Qué guarda |
+|---|---|
+| `rivales.cadenas` | Cadenas competidoras y su posicionamiento (premium, económica, conveniencia) |
+| `rivales.tiendas` | Sucursales rivales, cada una en uno de nuestros sitios (`site_id`) |
+| `rivales.productos` | Catálogo de cada cadena, ligado a nuestro producto (`sku_equivalente`) |
+| `rivales.precios` | Precio por sucursal, producto y fecha; `precio_promo` si estaba en oferta |
+
+- `npm run db:rivales` la llena con datos **de ejemplo ficticios** (3 cadenas, ~45 sucursales, 4 semanas de precios). Se puede correr varias veces. Los datos del scraper van a las mismas tablas con `fuente = 'scraper'` y no se borran.
+- La vista `v_competencia_tienda` compara cada tienda contra los rivales **de su mismo sitio**; si no hay, usa `precios_competencia`. La usan las recomendaciones de precio (campo `competencia`, con `alcance: "sitio" | "general"`). Se compara contra el precio **normal** del rival; si alguno está en oferta, se avisa (`rival_en_promocion`).
+- `GET /api/competencia/rivales/:tienda`: sucursales rivales del sitio.
+- `GET /api/competencia/comparar/:tienda?q=donut`: nuestro precio vs. cada rival, por producto.
+- El **chatbot** tiene dos herramientas nuevas: `comparar_con_rivales` y `listar_rivales`. Ejemplo: *"¿Qué productos de S001 están más caros que los rivales?"*.
+
+> `npm run db:cargar` ahora aplica todas las migraciones (002 a 005) automáticamente. Después: `npm run db:rivales` y, si quieren, `npm run db:competencia -- --demo`.
+
+---
+
+## Avatar: estado de ánimo de la tienda
+
+`GET /api/dashboard/:tienda/animo` (también viene como `animo` dentro de `GET /api/dashboard/:tienda`)
+
+```jsonc
+{
+  "estado": "triste",                // feliz | triste
+  "puntaje": 45,                     // 0–100 (null si está cerrada)
+  "cerrada": false,                  // true si la tienda no operó (sale triste)
+  "mensaje": "Semana difícil: hay 20 de 35 productos sin stock o bajos. Revisa las recomendaciones.",
+  "principal_problema": "faltantes", // ventas | merma | faltantes | null
+  "factores": [
+    { "clave": "ventas",    "peso": 45, "valor": -4.9, "puntaje": 34, "texto": "Ventas -4.9 % vs. la semana anterior" },
+    { "clave": "merma",     "peso": 30, "valor": 7.7,  "puntaje": 100, "texto": "Se tiró el 7.7 % por caducidad" },
+    { "clave": "faltantes", "peso": 25, "valor": 57.1, "puntaje": 0,   "texto": "20 de 35 productos sin stock o bajos" }
+  ]
+}
+```
+
+- **Puntaje** = ventas vs. semana anterior (45 %) + merma (30 %) + productos sin stock o bajos (25 %).
+- **Solo dos estados:** `feliz` si el puntaje es ≥ 50, `triste` si es menor. Una tienda que cerró o no vendió en el periodo sale `triste` con `cerrada: true`.
+- En el front basta con: `animo.estado === "feliz" ? <AvatarFeliz/> : <AvatarTriste/>`.
+- `mensaje` es una frase lista para que la cajera la diga: se puede mandar a `POST /api/voz`.
+- `?dias=30` lo calcula sobre el último mes.
+
+`GET /api/dashboard/animo` devuelve el estado de **todas** las tiendas (de peor a mejor) para colorear los pines del mapa. Se guarda 10 minutos en memoria.
