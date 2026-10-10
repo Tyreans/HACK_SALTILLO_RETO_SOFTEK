@@ -90,6 +90,7 @@ export default function RestockPopup({
   onEdit,
   onAccept,
   onReject,
+  onOpenAddManager,
   title = 'Reposición de Inventario',
   subtitle = 'Confirmar orden de reposición',
   description = 'Se han identificado productos con stock bajo. Confirma o edita las cantidades a añadir para alcanzar el stock objetivo.',
@@ -110,7 +111,27 @@ export default function RestockPopup({
       <section className="restock-modal" aria-label="Popup de reposición de inventario">
         <header className="modal-header">
           <div className="header-copy">
-            <h1>{title}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <h1>{title}</h1>
+              {onOpenAddManager && (
+                <button
+                  type="button"
+                  onClick={onOpenAddManager}
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    backgroundColor: '#fff7ed',
+                    color: '#ea580c',
+                    border: '1px solid #fed7aa',
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  + Agregar opción
+                </button>
+              )}
+            </div>
             <p>{subtitle}</p>
             <span>{description}</span>
           </div>
