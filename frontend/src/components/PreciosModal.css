@@ -1,0 +1,299 @@
+.precios-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(5px);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeInBackdrop 0.2s ease-out;
+}
+
+.precios-modal-card {
+  background: #ffffff;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 740px;
+  max-height: 90vh;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scaleUpModal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.precios-modal-header {
+  padding: 1.25rem 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.precios-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.precios-header-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.precios-modal-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.precios-modal-sub {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.precios-add-btn {
+  padding: 0.35rem 0.8rem;
+  background: #fff7ed;
+  color: #ea580c;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.precios-add-btn:hover {
+  background: #ffedd5;
+  border-color: #ea580c;
+}
+
+.precios-modal-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.precios-modal-close:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.precios-modal-body {
+  padding: 1.5rem 1.75rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.precio-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 1.25rem;
+  background: #ffffff;
+  display: flex;
+  gap: 1.25rem;
+  transition: all 0.2s ease;
+}
+
+.precio-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.06);
+}
+
+.precio-visual {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  flex-shrink: 0;
+  border: 1px solid #e2e8f0;
+}
+
+.precio-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.precio-header-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.precio-header-line h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.precio-badge-sug {
+  font-size: 0.72rem;
+  color: #ea580c;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+/* Comparativa de precios */
+.precio-comparison-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.precio-item-metric {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.precio-dot-current {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.precio-dot-suggested {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ea580c;
+}
+
+.precio-val-current {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 1rem;
+}
+
+.precio-val-suggested {
+  font-weight: 700;
+  color: #ea580c;
+  font-size: 1.05rem;
+}
+
+.precio-range-tag {
+  color: #64748b;
+  font-size: 0.78rem;
+  background: #f1f5f9;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+
+/* Campos de entrada */
+.precio-inputs-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.precio-input-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.precio-input-field label {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.precio-text-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: #1e293b;
+  outline: none;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.precio-text-input:focus {
+  border-color: #ea580c;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.12);
+}
+
+/* Acciones */
+.precio-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.precio-btn-edit {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #ea580c;
+  border: 1px solid #fed7aa;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.precio-btn-edit:hover {
+  background: #fff7ed;
+}
+
+.precio-btn-reject {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.precio-btn-reject:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.precio-btn-save {
+  padding: 0.5rem 1.25rem;
+  border-radius: 10px;
+  background: #ea580c;
+  color: #ffffff;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.precio-btn-save:hover {
+  background: #c2410c;
+}

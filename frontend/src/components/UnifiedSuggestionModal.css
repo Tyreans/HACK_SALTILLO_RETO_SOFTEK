@@ -1,0 +1,450 @@
+/* UnifiedSuggestionModal.css - Estilo Mac Minimalista Blanco basado en SUGERENCIAS_PRECIOS.png */
+
+.mac-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeInMacModal 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInMacModal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.mac-modal-card {
+  background: #ffffff;
+  border-radius: 24px;
+  width: 100%;
+  max-width: 880px;
+  max-height: 88vh;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scaleUpMacModal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes scaleUpMacModal {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Header Estilo Mac con Títulos Distintivos por Módulo */
+.mac-modal-header {
+  padding: 1.35rem 2rem;
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.mac-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.mac-title-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* TÍTULOS DISTINTIVOS (A EXCEPCIÓN DEL TÍTULO, TODO EL RESTO ES BLANCO MAC) */
+.mac-modal-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: 12px;
+  letter-spacing: -0.01em;
+}
+
+/* Colores distintivos según tipo */
+.mac-modal-title.reposicion {
+  color: #c2410c;
+  background-color: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+
+.mac-modal-title.promocion {
+  color: #6d28d9;
+  background-color: #f5f3ff;
+  border: 1px solid #ddd6fe;
+}
+
+.mac-modal-title.precio {
+  color: #047857;
+  background-color: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+
+.mac-header-sub {
+  font-size: 0.82rem;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.mac-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.mac-btn-add-mgr {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.95rem;
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.mac-btn-add-mgr:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.mac-btn-close {
+  background: #f1f5f9;
+  border: none;
+  color: #64748b;
+  font-size: 1.1rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mac-btn-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+/* Modal Body */
+.mac-modal-body {
+  padding: 1.5rem 2rem 2rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  background-color: #fafbfc;
+}
+
+/* Tarjeta individual estilo SUGERENCIAS_PRECIOS.png */
+.mac-item-card {
+  background: #ffffff;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  padding: 1.35rem;
+  display: flex;
+  gap: 1.4rem;
+  box-shadow: 0 4px 14px -3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.mac-item-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.08);
+}
+
+/* Visual thumbnail del producto */
+.mac-item-visual {
+  width: 76px;
+  height: 76px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.3rem;
+  flex-shrink: 0;
+}
+
+.mac-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Cabecera del item: nombre + badge */
+.mac-item-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mac-item-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.mac-item-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.65rem;
+  border-radius: 20px;
+  background-color: #f1f5f9;
+  color: #475569;
+}
+
+.mac-item-badge.alta {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.mac-item-badge.promo {
+  background-color: #f5f3ff;
+  color: #6d28d9;
+}
+
+.mac-item-badge.precio {
+  background-color: #ecfdf5;
+  color: #047857;
+}
+
+/* Razón de la IA (Gemini) */
+.mac-ai-reason-box {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  color: #334155;
+  line-height: 1.4;
+}
+
+.mac-ai-reason-label {
+  font-weight: 700;
+  color: #4f46e5;
+  margin-right: 0.35rem;
+}
+
+/* Fila de comparación de métricas (Precio actual vs sugerido / Stock actual vs sugerido) */
+.mac-metrics-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.mac-metric-point {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mac-dot-current {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.mac-dot-suggested {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ea580c;
+}
+
+.mac-val-current {
+  font-weight: 700;
+  color: #334155;
+}
+
+.mac-val-suggested {
+  font-weight: 800;
+  color: #ea580c;
+}
+
+.mac-range-tag {
+  color: #64748b;
+  font-size: 0.78rem;
+  background: #f1f5f9;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* Fila de Inputs dinámicos */
+.mac-inputs-row {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.15rem;
+  flex-wrap: wrap;
+}
+
+.mac-input-col {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.mac-input-col label {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.mac-text-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: #0f172a;
+  outline: none;
+  background: #ffffff;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mac-text-input:focus {
+  border-color: #ea580c;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.12);
+}
+
+/* Stepper para Reposición */
+.mac-stepper-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.25rem 0.4rem;
+  width: fit-content;
+}
+
+.mac-stepper-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  border: none;
+  color: #334155;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.mac-stepper-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.mac-stepper-val {
+  min-width: 44px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: #0f172a;
+}
+
+/* Acciones estilo Mac (Abajo a la derecha) */
+.mac-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 0.35rem;
+}
+
+.mac-btn-subtle {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mac-btn-subtle:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.mac-btn-reject {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #ef4444;
+  border: 1px solid #fca5a5;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mac-btn-reject:hover {
+  background: #fef2f2;
+}
+
+.mac-btn-primary {
+  padding: 0.5rem 1.35rem;
+  border-radius: 10px;
+  background: #ea580c;
+  color: #ffffff;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
+}
+
+.mac-btn-primary:hover {
+  background: #c2410c;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
+  transform: translateY(-1px);
+}
