@@ -1,0 +1,192 @@
+import * as Candidatos from "../models/candidatos.model.js";
+import * as Dashboard from "../models/dashboard.model.js";
+import * as Tienda from "../models/tienda.model.js";
+import * as Venta from "../models/venta.model.js";
+import * as Rec from "../models/recomendacion.model.js";
+import { periodo } from "./dashboard.service.js";
+import * as Memoria from "./memoria.service.js";
+import { generar } from "./gemini.service.js";
+import { ApiError } from "../utils/apiError.js";
+
+const MAX_FILAS = 8;
+const r2 = (n) => Math.round(n * 100) / 100;
+const enRango = (n, min, max) => Math.min(Math.max(n, min), max);
+
+// ------------------------------------------------------------------ reglas por tipo
+
+// Re-stock: cubrir (entrega del proveedor + días de colchón) con 20 % de seguridad,
+// restando lo que hay y lo que ya viene en camino; se pide en cajas completas.
+function reposicion(c, factor = 1) {
+  const colchon = c.perecedero ? 1 : 3;
+  const objetivo = c.venta_diaria * (c.entrega + colchon) * 1.2;
+  const faltante = objetivo - c.existencia - c.en_camino;
+  if (faltante <= 0) return null;
+
+  let cantidad = Math.ceil(faltante / c.caja) * c.caja;
+  if (c.perecedero) {
+    // no pedir más de lo que se alcanza a vender antes de que caduque
+    const tope = Math.floor((c.venta_diaria * c.vida_util) / c.caja) * c.caja;
+    if (tope < c.caja) return null;
+    cantidad = Math.min(cantidad, tope);
+  }
+  cantidad = Math.max(c.caja, Math.round((cantidad * factor) / c.caja) * c.caja);
+
+  const dias = c.existencia / c.venta_diaria;
+  return {
+    tipo: "reposicion", sku: c.sku, producto: c.producto, cantidad,
+    prioridad: dias <= c.entrega ? "alta" : dias <= c.entrega + 2 ? "media" : "baja",
+    orden: dias,
+    hecho: `Quedan ${c.existencia} piezas (≈${dias.toFixed(1)} días), vende ${c.venta_diaria.toFixed(1)} al día y el proveedor tarda ${c.entrega} días.`,
+  };
+}
+
+// Promoción: merma por caducidad o inventario para muchos días. Nunca bajo costo + 5 %.
+function promocion(c, factor = 1) {
+  const vd = Math.max(c.venta_diaria, 0.01);
+  const merma = c.caducado / Math.max(c.vendido + c.caducado, 1);
+  const cobertura = c.existencia / vd;
+
+  let descuento, prioridad, hecho;
+  if (c.perecedero && (merma >= 0.1 || c.existencia >= vd * c.vida_util * 0.7)) {
+    descuento = merma >= 0.25 ? 30 : 20;
+    prioridad = merma >= 0.25 ? "alta" : "media";
+    hecho = merma >= 0.1
+      ? `Se caducó el ${Math.round(merma * 100)} % de lo disponible esta semana y quedan ${c.existencia} piezas.`
+      : `Hay ${c.existencia} piezas y su vida útil es de ${c.vida_util} días.`;
+  } else if (cobertura >= 10) {
+    descuento = cobertura >= 21 ? 15 : 10;
+    prioridad = "baja";
+    hecho = `Hay inventario para ${Math.round(cobertura)} días y vende ${c.venta_diaria.toFixed(1)} al día.`;
+  } else return null;
+
+  const techo = Math.floor((1 - (c.costo * 1.05) / c.precio) * 100);
+  descuento = Math.min(Math.round(descuento * factor), techo);
+  descuento = Math.min(Math.max(descuento, 5), techo);
+  if (techo < 5) return null;
+
+  return {
+    tipo: "promocion", sku: c.sku, producto: c.producto, descuento_pct: descuento,
+    precio_actual: c.precio, prioridad, orden: -descuento, hecho,
+  };
+}
+
+// Precio: acercarse al promedio de la competencia; subir si estamos muy abajo y el producto se vende
+function precio(c) {
+  const brecha = (c.precio - c.promedio) / c.promedio;
+  let propuesto, hecho;
+  if (brecha > 0.05) {
+    propuesto = r2(Math.max(c.promedio, c.costo * 1.15));
+    hecho = `Cuesta ${Math.round(brecha * 100)} % más que el promedio de la competencia ($${r2(c.promedio)}).`;
+  } else if (brecha < -0.1 && c.unidades > 0) {
+    propuesto = r2(c.promedio * 0.97);
+    hecho = `Cuesta ${Math.round(-brecha * 100)} % menos que la competencia ($${r2(c.promedio)}) y se vende: hay margen para subir.`;
+  } else return null;
+  if (propuesto === c.precio) return null;
+  const abs = Math.abs(brecha);
+  return {
+    tipo: "precio", sku: c.sku, producto: c.producto, precio_actual: c.precio, precio_propuesto: propuesto,
+    prioridad: abs >= 0.15 ? "alta" : abs >= 0.08 ? "media" : "baja", orden: -abs, hecho,
+  };
+}
+
+// Sin datos de competencia: bajar 10 % al peor vendedor, sin pasar de costo + 10 %
+async function precioSinCompetencia(tienda) {
+  const p = await periodo({ dias: 7 });
+  const peores = await Dashboard.productosPorVenta({ tienda, ...p, limite: 3, orden: "ASC" });
+  const items = [];
+  for (const x of peores) {
+    const prod = await Candidatos.producto(tienda, x.sku);
+    if (!prod?.precio) continue;
+    const propuesto = r2(Math.max(prod.precio * 0.9, prod.costo * 1.1));
+    if (propuesto >= prod.precio) continue;
+    items.push({
+      tipo: "precio", sku: x.sku, producto: prod.producto, precio_actual: prod.precio,
+      precio_propuesto: propuesto, prioridad: "baja", orden: 0,
+      hecho: "Es de los que menos se venden y aún no hay precios de la competencia: se propone una baja del 10 %.",
+    });
+  }
+  return items;
+}
+
+// ------------------------------------------------------------------ redacción con Gemini
+
+// Gemini solo redacta el motivo; los productos y cifras salen de la base de datos.
+// Si falla o contesta algo raro, se usa el texto de la regla.
+async function redactar(items, tipo, tienda) {
+  if (!items.length) return items;
+  const base = items.map((i) => ({ ...i, descripcion: i.hecho }));
+  try {
+    const memoria = await Memoria.contexto({ tienda, tipo }).catch(() => "");
+    const out = await generar({
+      json: true,
+      sistema: "Eres analista de una tienda en aeropuerto. Respondes en español, breve y sin inventar datos.",
+      prompt:
+        `Para cada fila escribe el motivo de la sugerencia en máximo 18 palabras, conservando las cifras de "hecho".\n` +
+        (memoria ? `Lo que ya sabes de este negocio:\n${memoria}\n` : "") +
+        `Filas: ${JSON.stringify(items.map((i) => ({ sku: i.sku, producto: i.producto, hecho: i.hecho })))}\n` +
+        `Devuelve un arreglo JSON: [{"sku":"...","motivo":"..."}]`,
+    });
+    const porSku = new Map((Array.isArray(out) ? out : []).map((o) => [o?.sku, o?.motivo]));
+    for (const i of base) {
+      const m = porSku.get(i.sku);
+      if (typeof m === "string" && m.trim()) i.descripcion = m.trim().slice(0, 200);
+    }
+  } catch (e) {
+    console.error(`Gemini falló (${tipo}), usando el texto de la regla:`, e.message);
+  }
+  return base;
+}
+
+// ------------------------------------------------------------------ generación
+
+async function generarItems(tienda, tipo) {
+  const { hasta } = await Venta.rangoFechas();
+  const [excluidos, factores] = await Promise.all([
+    Rec.skusExcluidos(tienda, tipo),
+    Rec.factoresAprendidos(tienda, tipo),
+  ]);
+
+  let items;
+  if (tipo === "reposicion") {
+    items = (await Candidatos.reposicion(tienda, hasta)).map((c) => reposicion(c, enRango(factores.get(c.sku) ?? 1, 0.3, 1.5)));
+  } else if (tipo === "promocion") {
+    items = (await Candidatos.promocion(tienda, hasta)).map((c) => promocion(c, enRango(factores.get(c.sku) ?? 1, 0.5, 1.5)));
+  } else {
+    const filas = await Candidatos.precios(tienda, hasta);
+    items = filas.length ? filas.map(precio) : await precioSinCompetencia(tienda);
+  }
+
+  items = items
+    .filter((i) => i && !excluidos.has(i.sku))
+    .sort((a, b) => a.orden - b.orden)
+    .slice(0, MAX_FILAS);
+  return redactar(items, tipo, tienda);
+}
+
+// Sin `tipo`: solo lo que ya existe hoy (barato, para los contadores de los botones).
+// Con `tipo`: si hoy aún no se generó, se genera; después siempre devuelve lo guardado.
+export async function obtener({ tienda, tipo, regenerar = false }) {
+  if (!(await Tienda.obtener(tienda))) throw new ApiError(404, `La tienda ${tienda} no existe`);
+  if (!tipo) return Rec.delDia(tienda);
+  if (regenerar || !(await Rec.hayAgenteHoy(tienda, tipo))) {
+    await Rec.reemplazarAgente(tienda, tipo, await generarItems(tienda, tipo), { regenerar });
+  }
+  return Rec.delDia(tienda, tipo);
+}
+
+export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, precio, motivo }) {
+  if (!(await Tienda.obtener(tienda))) throw new ApiError(404, `La tienda ${tienda} no existe`);
+  const producto = await Candidatos.producto(tienda, sku);
+  if (!producto) throw new ApiError(404, `El producto ${sku} no existe`);
+
+  if (tipo === "reposicion" && cantidad == null) throw new ApiError(400, "Falta 'cantidad'");
+  if (tipo === "promocion" && descuento_pct == null) throw new ApiError(400, "Falta 'descuento_pct'");
+  if (tipo === "precio" && precio == null) throw new ApiError(400, "Falta 'precio'");
+  if (tipo === "precio" && producto.precio == null) throw new ApiError(400, "Ese producto no tiene precio vigente en la tienda");
+  const campo = { reposicion: "cantidad", promocion: "descuento_pct", precio: "precio" }[tipo];
+  const dado = { cantidad, descuento_pct, precio };
+  for (const k of Object.keys(dado)) {
+    if (k !== campo && dado[k] != null) throw new ApiError(400, `Una recomendación de ${tipo} solo admite "${campo}"`);
+  }
+  return Rec.crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo });
+}

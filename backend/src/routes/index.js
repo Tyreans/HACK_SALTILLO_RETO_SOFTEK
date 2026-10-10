@@ -10,9 +10,11 @@ import { asyncHandler, ok } from "../utils/apiResponse.js";
 
 const router = Router();
 
+// Índice: lista todas las rutas registradas
 router.get("/", (req, res) =>
   ok(res, {
     nombre: "API Otzo",
+    documentacion: "/api/docs",
     endpoints: router.stack
       .filter((c) => c.route)
       .map((c) => `${Object.keys(c.route.methods)[0].toUpperCase()} /api${c.route.path}`),
@@ -49,5 +51,22 @@ router.get("/inventario/export", Inventario.exportarExcel);
 router.get("/ventas/diarias", Ventas.diarias);
 router.get("/ventas/top-productos", Ventas.topProductos);
 router.get("/promociones", Ventas.promociones);
+
+// Recomendaciones (panel de IA): una tabla por tipo, una fila por producto
+const limiteIA = limitar({ max: 10, ventanaMs: 60_000 });
+router.get("/recomendaciones/:tienda", limitarSi((req) => req.query.regenerar === "1", limiteIA), Recs.listar);
+router.post("/recomendaciones", Recs.crear);
+router.patch("/recomendaciones/:id", Recs.editar);
+router.patch("/recomendaciones/:id/precio", Recs.editar); // alias de la versión anterior
+router.post("/recomendaciones/:id/aceptar", Recs.aceptar);
+router.post("/recomendaciones/:id/rechazar", Recs.rechazar);
+
+// Precios de la competencia (los carga un script; el POST pide x-admin-key)
+router.get("/competencia/precios", Competencia.listar);
+router.post("/competencia/precios", requiereClaveAdmin, Competencia.cargar);
+
+// Cajera: cada llamada gasta créditos, por eso el límite
+router.post("/chat", limiteIA, Asistente.chat);
+router.post("/voz", limiteIA, Asistente.hablar);
 
 export default router;
