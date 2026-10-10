@@ -3,28 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { env } from "../config/env.config.js";
-import { generar } from "../services/gemini.service.js";
-import { resumenTienda } from "../services/dashboard.service.js";
-import { ok, asyncHandler } from "../utils/apiResponse.js";
-import { tiendaOpcional } from "../utils/validar.js";
+import { asyncHandler } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
-
-// POST /api/chat   body: { "tienda": "S001", "mensaje": "¿Qué se vendió mejor?" }
-export const chat = asyncHandler(async (req, res) => {
-  const tienda = tiendaOpcional(req.body?.tienda);
-  const mensaje = String(req.body?.mensaje ?? "").trim();
-  if (!tienda) throw new ApiError(400, "Falta la tienda");
-  if (!mensaje || mensaje.length > 300) throw new ApiError(400, "El mensaje debe tener entre 1 y 300 caracteres");
-
-  const datos = await resumenTienda({ tienda, dias: 7, limite: 3 });
-  const respuesta = await generar({
-    sistema:
-      "Eres Otzo, la cajera virtual de la tienda. Responde en español, en máximo 2 frases cortas " +
-      "(se leerán en voz alta). Usa solo los datos dados; si no los tienes, dilo.",
-    prompt: `Datos de la tienda:\n${JSON.stringify(datos)}\n\nPregunta: ${mensaje}`,
-  });
-  ok(res, { respuesta });
-});
 
 // POST /api/voz   body: { "texto": "Hola" }  → audio/mpeg
 const CACHE = path.join(os.tmpdir(), "otzo-audio");

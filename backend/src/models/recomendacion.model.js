@@ -1,7 +1,12 @@
 import { query, pool } from "../config/db.config.js";
 import { ApiError } from "../utils/apiError.js";
+import { mkdir, readFile, link, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 export const TIPOS = ["reposicion", "promocion", "precio"];
+const ORDENES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../data/purchase-orders");
 
 // Qué campos puede editar el gerente en cada tipo
 const CAMPOS_EDITABLES = {
@@ -52,6 +57,50 @@ export async function hayAgenteHoy(tienda, tipo) {
     [tienda, tipo]
   );
   return rowCount > 0;
+}
+
+// Conteo de recomendaciones en la base de datos por tipo y estado para una sucursal
+export async function conteoPorTienda(tienda) {
+  const { rows } = await query(
+    `SELECT tipo,
+            count(*)::int AS total,
+            count(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes,
+            count(*) FILTER (WHERE estado = 'aceptada')::int AS aceptadas,
+            count(*) FILTER (WHERE estado = 'rechazada')::int AS rechazadas
+       FROM recomendaciones
+      WHERE store_id = $1
+      GROUP BY tipo`,
+    [tienda]
+  );
+
+  const conteos = {
+    reposicion: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+    promocion: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+    precio: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+  };
+
+  let totalGeneral = 0;
+  let totalPendientes = 0;
+
+  for (const r of rows) {
+    if (conteos[r.tipo]) {
+      conteos[r.tipo] = {
+        total: r.total,
+        pendientes: r.pendientes,
+        aceptadas: r.aceptadas,
+        rechazadas: r.rechazadas,
+      };
+      totalGeneral += r.total;
+      totalPendientes += r.pendientes;
+    }
+  }
+
+  return {
+    tienda,
+    conteos,
+    total: totalGeneral,
+    pendientes: totalPendientes,
+  };
 }
 
 // ------------------------------------------------------------------ aprendizaje
@@ -119,7 +168,9 @@ export async function reemplazarAgente(tienda, tipo, items, { regenerar = false 
         [tienda, tipo, i.prioridad, i.producto, i.descripcion, i.sku, i.cantidad ?? null,
          i.descuento_pct ?? null, i.precio_actual ?? null, i.precio_propuesto ?? null,
          JSON.stringify({ cantidad: i.cantidad ?? null, descuento_pct: i.descuento_pct ?? null, precio_propuesto: i.precio_propuesto ?? null,
-                          fecha_inicio: i.fecha_inicio ?? null, fecha_fin: i.fecha_fin ?? null }),
+                          existencia: i.existencia ?? null, sobrante_proyectado: i.sobrante_proyectado ?? null,
+                          fecha_inicio: i.fecha_inicio ?? null, fecha_fin: i.fecha_fin ?? null,
+                          actualizar_promo_id: i.actualizar_promo_id ?? null }),
          i.fecha_inicio ?? null, i.fecha_fin ?? null]
       );
     }
@@ -213,67 +264,170 @@ export const rechazar = (id, motivo) => transaccion(async (client) => {
   return fila(client, id);
 });
 
+async function obtenerOrden(client, recomendacionId) {
+  const { rows } = await client.query(
+    `SELECT po.po_id, po.recommendation_id, po.store_id, po.supplier_id, po.sku,
+            p.product_name AS producto, po.order_date::text AS order_date,
+            po.expected_date::text AS expected_date, po.qty_ordered,
+            po.unit_cost, po.status
+       FROM purchase_orders po JOIN products p USING (sku)
+      WHERE po.recommendation_id = $1`,
+    [recomendacionId]
+  );
+  return rows[0] ?? null;
+}
+
+async function escribirOrdenJson(orden) {
+  if (!/^[A-Za-z0-9_-]+$/.test(orden.po_id)) {
+    throw new Error(`El identificador ${orden.po_id} no es válido para un archivo de orden.`);
+  }
+  await mkdir(ORDENES_DIR, { recursive: true });
+  const destino = path.join(ORDENES_DIR, `${orden.po_id}.json`);
+  const temporal = path.join(ORDENES_DIR, `.${orden.po_id}.${randomUUID()}.tmp`);
+  const contenido = `${JSON.stringify(orden, null, 2)}\n`;
+
+  try {
+    await writeFile(temporal, contenido, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    try {
+      await link(temporal, destino);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const existente = JSON.parse(await readFile(destino, "utf8"));
+      if (existente.po_id !== orden.po_id || existente.recommendation_id !== orden.recommendation_id) {
+        throw new Error(`Ya existe un archivo distinto para la orden ${orden.po_id}.`);
+      }
+    }
+  } finally {
+    await unlink(temporal).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+
+  await query(
+    "UPDATE purchase_orders SET json_exported_at = coalesce(json_exported_at, now()) WHERE po_id = $1",
+    [orden.po_id]
+  );
+}
+
+async function exportarOrden(client, recomendacionId) {
+  const orden = await obtenerOrden(client, recomendacionId);
+  if (!orden) throw new Error(`No se encontró la orden para la recomendación ${recomendacionId}.`);
+  await escribirOrdenJson(orden);
+}
+
+export async function exportarOrdenesPendientes() {
+  const { rows } = await query(
+    `SELECT po.recommendation_id
+       FROM purchase_orders po
+      WHERE po.recommendation_id IS NOT NULL AND po.json_exported_at IS NULL
+      ORDER BY po.order_date, po.po_id`
+  );
+  let exportadas = 0;
+  for (const row of rows) {
+    const client = await pool.connect();
+    try {
+      await exportarOrden(client, row.recommendation_id);
+      exportadas += 1;
+    } finally {
+      client.release();
+    }
+  }
+  return exportadas;
+}
+
 // Aceptar = decisión del gerente + efecto real:
-//  - reposición → crea una orden de compra en tránsito (purchase_orders)
+//  - reposición → crea una orden de compra y un JSON recuperable por reintento
 //  - precio     → cierra el precio vigente y abre el nuevo (prices)
 //  - promoción  → crea la promoción en promotions solo para esa tienda y ese producto, con su vigencia
-export const aceptar = (id, ajustes = {}) => transaccion(async (client) => {
-  const r = await pendiente(client, id);
-  const { v, cambio } = aplicar(r, ajustes);
-  let aplicadoId = null;
+export async function aceptar(id, ajustes = {}) {
+  const resultado = await transaccion(async (client) => {
+    const { rows } = await client.query("SELECT * FROM recomendaciones WHERE id = $1 FOR UPDATE", [id]);
+    const r = rows[0];
+    if (!r) throw new ApiError(404, "Recomendación no encontrada");
 
-  if (r.tipo === "reposicion") {
-    const { rows } = await client.query(
-      `SELECT p.supplier_id, p.unit_cost, coalesce(s.standard_lead_time_days, 2) AS entrega
-         FROM products p LEFT JOIN suppliers s ON s.supplier_id = p.supplier_id WHERE p.sku = $1`,
-      [r.sku]
-    );
-    const p = rows[0];
-    aplicadoId = `WEB-PO-${Date.now()}-${id}`;
+    if (r.estado === "aceptada" && r.tipo === "reposicion") {
+      const orden = await obtenerOrden(client, id);
+      if (!orden) throw new ApiError(500, "La recomendación está aceptada pero no tiene una orden registrada");
+      return { recomendacion: await fila(client, id), recomendacionId: id };
+    }
+    if (r.estado !== "pendiente") throw new ApiError(409, "Esta recomendación ya fue resuelta");
+
+    const { v, cambio } = aplicar(r, ajustes);
+    let aplicadoId = null;
+
+    if (r.tipo === "reposicion") {
+      const { rows: productos } = await client.query(
+        `SELECT p.supplier_id, p.unit_cost, coalesce(s.standard_lead_time_days, 2) AS entrega
+           FROM products p LEFT JOIN suppliers s ON s.supplier_id = p.supplier_id WHERE p.sku = $1`,
+        [r.sku]
+      );
+      const producto = productos[0];
+      aplicadoId = `OTZO-PO-${id}`;
+      await client.query(
+        `INSERT INTO purchase_orders
+           (po_id, store_id, supplier_id, sku, order_date, expected_date, qty_ordered, unit_cost, status, recommendation_id)
+         VALUES ($1,$2,$3,$4,CURRENT_DATE,CURRENT_DATE + $5::int,$6,$7,'In transit',$8)
+         ON CONFLICT (recommendation_id) WHERE recommendation_id IS NOT NULL DO NOTHING`,
+        [aplicadoId, r.store_id, producto?.supplier_id ?? null, r.sku,
+         producto?.entrega ?? 2, v.cantidad, producto?.unit_cost ?? null, id]
+      );
+    }
+    if (r.tipo === "precio") {
+      await client.query(
+        `UPDATE prices SET effective_to = CURRENT_DATE - 1, last_updated = CURRENT_DATE
+          WHERE store_id = $1 AND sku = $2 AND effective_to IS NULL`,
+        [r.store_id, r.sku]
+      );
+      aplicadoId = `WEB-${Date.now()}-${id}`;
+      await client.query(
+        `INSERT INTO prices (price_id, store_id, sku, unit_price, currency, effective_from, price_list, last_updated)
+         VALUES ($1,$2,$3,$4,'USD',CURRENT_DATE,'otzo-web',CURRENT_DATE)`,
+        [aplicadoId, r.store_id, r.sku, v.precio_propuesto]
+      );
+    }
+    if (r.tipo === "promocion") {
+      if (!v.descuento_pct) throw new ApiError(400, "La promoción no tiene % de descuento");
+      aplicadoId = `PR-WEB-${id}`;
+      // Sin fechas: empieza hoy y dura 7 días
+      await client.query(
+        `INSERT INTO promotions (promo_id, promo_name, promo_type, start_date, end_date, discount_pct,
+                                 department, category, region_scope, store_id, sku, origen, recomendacion_id)
+         SELECT $1, left('Promo ' || p.product_name, 80), 'Percent Off',
+                coalesce($2::date, CURRENT_DATE), coalesce($3::date, coalesce($2::date, CURRENT_DATE) + 6), $4,
+                p.department, p.category, 'TIENDA', $5, p.sku, $6, $7
+           FROM products p WHERE p.sku = $8`,
+        [aplicadoId, v.fecha_inicio, v.fecha_fin, v.descuento_pct, r.store_id, r.origen, id, r.sku]
+      );
+      const { rows: fechas } = await client.query(
+        "SELECT start_date::text AS i, end_date::text AS f FROM promotions WHERE promo_id = $1",
+        [aplicadoId]
+      );
+      v.fecha_inicio = fechas[0].i;
+      v.fecha_fin = fechas[0].f;
+    }
     await client.query(
-      `INSERT INTO purchase_orders
-         (po_id, store_id, supplier_id, sku, order_date, expected_date, qty_ordered, unit_cost, status)
-       VALUES ($1,$2,$3,$4,CURRENT_DATE,CURRENT_DATE + $5::int,$6,$7,'In transit')`,
-      [aplicadoId, r.store_id, p?.supplier_id ?? null, r.sku, p?.entrega ?? 2, v.cantidad, p?.unit_cost ?? null]
+      `UPDATE recomendaciones
+          SET estado = 'aceptada', resuelta_en = now(), cantidad = $2, descuento_pct = $3,
+              precio_propuesto = $4, editada = editada OR $5,
+              fecha_inicio = $6, fecha_fin = $7, aplicado_id = $8
+        WHERE id = $1`,
+      [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio, v.fecha_inicio, v.fecha_fin, aplicadoId]
     );
+    return { recomendacion: await fila(client, id), recomendacionId: r.tipo === "reposicion" ? id : null };
+  });
+
+  if (resultado.recomendacionId) {
+    try {
+      const client = await pool.connect();
+      try {
+        await exportarOrden(client, resultado.recomendacionId);
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      // La orden ya quedó en la base; el JSON es solo un respaldo. No rompemos la respuesta.
+      console.warn(`Orden aceptada, pero no se pudo escribir su JSON (se reintenta con recomendaciones:generar): ${error.message}`);
+    }
   }
-  if (r.tipo === "precio") {
-    await client.query(
-      `UPDATE prices SET effective_to = CURRENT_DATE - 1, last_updated = CURRENT_DATE
-        WHERE store_id = $1 AND sku = $2 AND effective_to IS NULL`,
-      [r.store_id, r.sku]
-    );
-    aplicadoId = `WEB-${Date.now()}-${id}`;
-    await client.query(
-      `INSERT INTO prices (price_id, store_id, sku, unit_price, currency, effective_from, price_list, last_updated)
-       VALUES ($1,$2,$3,$4,'USD',CURRENT_DATE,'otzo-web',CURRENT_DATE)`,
-      [aplicadoId, r.store_id, r.sku, v.precio_propuesto]
-    );
-  }
-  if (r.tipo === "promocion") {
-    if (!v.descuento_pct) throw new ApiError(400, "La promoción no tiene % de descuento");
-    aplicadoId = `PR-WEB-${id}`;
-    // Sin fechas: empieza hoy y dura 7 días
-    await client.query(
-      `INSERT INTO promotions (promo_id, promo_name, promo_type, start_date, end_date, discount_pct,
-                               department, category, region_scope, store_id, sku, origen, recomendacion_id)
-       SELECT $1, left('Promo ' || p.product_name, 80), 'Percent Off',
-              coalesce($2::date, CURRENT_DATE), coalesce($3::date, coalesce($2::date, CURRENT_DATE) + 6), $4,
-              p.department, p.category, 'TIENDA', $5, p.sku, $6, $7
-         FROM products p WHERE p.sku = $8`,
-      [aplicadoId, v.fecha_inicio, v.fecha_fin, v.descuento_pct, r.store_id, r.origen, id, r.sku]
-    );
-    const { rows } = await client.query(`SELECT start_date::text AS i, end_date::text AS f FROM promotions WHERE promo_id = $1`, [aplicadoId]);
-    v.fecha_inicio = rows[0].i;
-    v.fecha_fin = rows[0].f;
-  }
-  await client.query(
-    `UPDATE recomendaciones
-        SET estado = 'aceptada', resuelta_en = now(), cantidad = $2, descuento_pct = $3,
-            precio_propuesto = $4, editada = editada OR $5,
-            fecha_inicio = $6, fecha_fin = $7, aplicado_id = $8
-      WHERE id = $1`,
-    [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio, v.fecha_inicio, v.fecha_fin, aplicadoId]
-  );
-  return fila(client, id);
-});
+  return resultado.recomendacion;
+}

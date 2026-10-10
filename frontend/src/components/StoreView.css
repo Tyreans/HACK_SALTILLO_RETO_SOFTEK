@@ -432,6 +432,10 @@
   /* SUBIR AMBOS para centrarlos en la pantalla (-50px, -80px, -120px) */
   --speech-top: -35px;
   /* Altura del globo de texto flotante */
+  --speech-left: 50%;
+  /* Posición horizontal base del globo */
+  --speech-tail-right: 32px;
+  /* Posición de la cola en la esquina inferior derecha */
 
   position: relative;
   width: var(--desk-width, 1200px);
@@ -470,8 +474,8 @@
 /* Speech bubble */
 .avatar-speech-bubble {
   position: absolute;
-  top: var(--speech-top);
-  left: 50%;
+  top: var(--speech-top, -35px);
+  left: var(--speech-left, 50%);
   transform: translateX(-50%);
   background-color: #ffffff;
   border-radius: 16px;
@@ -483,30 +487,59 @@
   font-weight: 600;
   max-width: 380px;
   text-align: center;
-  animation: floatSpeech 3s ease-in-out infinite;
+  animation: floatSpeech 3.5s ease-in-out infinite;
   z-index: 15;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  transition: box-shadow 0.2s ease;
 }
 
+.avatar-speech-bubble:hover {
+  box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.16);
+}
+
+.avatar-speech-bubble.is-dragging {
+  cursor: grabbing;
+  animation: none;
+  box-shadow: 0 22px 45px -4px rgba(0, 0, 0, 0.22);
+}
+
+/* Borde exterior de la cola en la esquina inferior derecha */
+.avatar-speech-bubble::before {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  right: calc(var(--speech-tail-right, 32px) - 1px);
+  left: auto;
+  transform: none;
+  border-width: 9px 5px 0 13px;
+  border-style: solid;
+  border-color: #e2e8f0 transparent transparent transparent;
+}
+
+/* Relleno blanco de la cola en la esquina inferior derecha apuntando hacia abajo-derecha */
 .avatar-speech-bubble::after {
   content: "";
   position: absolute;
   bottom: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 8px 8px 0;
+  right: var(--speech-tail-right, 32px);
+  left: auto;
+  transform: none;
+  border-width: 8px 4px 0 12px;
   border-style: solid;
-  border-color: #ffffff transparent;
+  border-color: #ffffff transparent transparent transparent;
 }
 
 @keyframes floatSpeech {
 
   0%,
   100% {
-    transform: translateY(0);
+    margin-top: 0;
   }
 
   50% {
-    transform: translateY(-4px);
+    margin-top: -6px;
   }
 }
 
@@ -581,20 +614,20 @@
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  padding: 0.75rem 1rem;
+  padding: 0.85rem 1.15rem;
   border-radius: 16px;
   border: 1px solid rgba(226, 232, 240, 0.85);
   box-shadow: 0 10px 25px -4px rgba(15, 23, 42, 0.08);
   display: flex;
   align-items: center;
-  justify-content: space-between;
 }
 
 .recs-header-left h2 {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.15rem;
+  font-weight: 800;
   color: #0f172a;
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
 .recs-header-left p {
@@ -756,6 +789,69 @@
   padding: 0.25rem 0.6rem;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+}
+
+/* ==========================================================================
+   BLOQUE DE COUNT DE RECOMENDACIONES EN DB LINKED A LA SUCURSAL
+   ========================================================================== */
+.big-card-count-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+
+.big-card-count-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.big-card-count-number {
+  font-size: 2.35rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.big-suggestion-card.reposicion .big-card-count-number {
+  color: #d97706;
+}
+
+.big-suggestion-card.promocion .big-card-count-number {
+  color: #7c3aed;
+}
+
+.big-suggestion-card.precio .big-card-count-number {
+  color: #059669;
+}
+
+.big-card-count-unit {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.big-card-branch-link {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 0.45rem;
+}
+
+.big-card-branch-link strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.branch-link-pin {
+  font-size: 0.9rem;
 }
 
 .big-card-cta {

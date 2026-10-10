@@ -13,7 +13,10 @@
     "db:limpiar": "node db/seeds/limpiar.js",
     "db:cargar": "node db/seeds/cargar.js",
     "db:competencia": "node db/seeds/competencia.js",
-    "db:rivales": "node db/seeds/rivales.js"
+    "db:rivales": "node db/seeds/rivales.js",
+    "db:migrar-backboard": "node scripts/migrar-backboard.js",
+    "recomendaciones:generar": "node scripts/generar-reposiciones.js",
+    "recomendaciones:reposicion": "node scripts/generar-reposiciones.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

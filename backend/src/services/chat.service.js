@@ -17,7 +17,7 @@ const CHAT_CONFIG = {
 Usa las herramientas de datos para responder preguntas sobre ventas, inventario, productos, tiendas o precios de las tiendas rivales; no inventes cifras ni escribas SQL.
 Las herramientas solo consultan datos. Si una pregunta requiere fechas relativas, consulta primero el rango disponible y cuenta desde la última fecha cargada, no desde la fecha actual.
 Si faltan datos o no hay resultados, dilo claramente. Resume los resultados sin afirmar más de lo que muestran.
-Si el usuario pide una lista o una cantidad de elementos, responde con una lista numerada, un elemento por línea, empezando en "1.". Si presentas más de un elemento aunque no te pidan una lista, enuméralos también. Cuando indiquen una cantidad concreta, devuelve como máximo esa cantidad. Si solo hay un elemento y no pidieron una lista, responde en prosa.`,
+Si una consulta devuelve más de un resultado o mencionas más de un elemento, responde obligatoriamente con una lista numerada: un elemento por línea, comenzando en "1.". No combines varios resultados en una sola frase ni uses viñetas. Si el usuario pide una lista o una cantidad, también usa una lista numerada. Cuando indiquen una cantidad concreta, devuelve como máximo esa cantidad. Si solo hay un elemento y no pidieron una lista, responde en prosa.`,
   tools: [{ functionDeclarations: databaseTools }],
 };
 

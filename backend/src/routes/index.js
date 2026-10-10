@@ -59,6 +59,7 @@ router.get("/promociones", Ventas.promociones);
 
 // Recomendaciones (panel de IA): una tabla por tipo, una fila por producto
 const limiteIA = limitar({ max: 10, ventanaMs: 60_000 });
+router.get("/recomendaciones/:tienda/conteo", Recs.conteo);
 router.get("/recomendaciones/:tienda", limitarSi((req) => req.query.regenerar === "1", limiteIA), Recs.listar);
 router.post("/recomendaciones", Recs.crear);
 router.patch("/recomendaciones/:id", Recs.editar);
@@ -73,7 +74,6 @@ router.get("/competencia/comparar/:tienda", Competencia.comparar);
 router.post("/competencia/precios", requiereClaveAdmin, Competencia.cargar);
 
 // Cajera: cada llamada gasta créditos, por eso el límite
-router.post("/chat", limiteIA, Asistente.chat);
 router.post("/voz", limiteIA, Asistente.hablar);
 
 export default router;

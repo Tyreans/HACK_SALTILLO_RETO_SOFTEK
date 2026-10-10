@@ -78,6 +78,28 @@ export const openapi = {
       responses: okJson("Datos del panel", { $ref: "#/components/schemas/Dashboard" }),
     } },
 
+    "/recomendaciones/{tienda}/conteo": { get: {
+      tags: ["Recomendaciones"], summary: "Conteo de recomendaciones en la BD por tipo para una sucursal",
+      description: "Devuelve cuántas recomendaciones hay en la base de datos de cada tipo (reposicion, promocion, precio) y estado (total, pendientes, aceptadas, rechazadas) para la tienda especificada.",
+      parameters: [tienda],
+      responses: okJson("Conteo por tipo", {
+        type: "object",
+        properties: {
+          tienda: { type: "string", example: "S001" },
+          conteos: {
+            type: "object",
+            properties: {
+              reposicion: { type: "object", properties: { total: { type: "integer" }, pendientes: { type: "integer" } } },
+              promocion: { type: "object", properties: { total: { type: "integer" }, pendientes: { type: "integer" } } },
+              precio: { type: "object", properties: { total: { type: "integer" }, pendientes: { type: "integer" } } },
+            },
+          },
+          total: { type: "integer", example: 24 },
+          pendientes: { type: "integer", example: 23 },
+        },
+      }),
+    } },
+
     "/recomendaciones/{tienda}": { get: {
       tags: ["Recomendaciones"], summary: "Tabla de sugerencias de un tipo (la genera la primera vez del día)",
       description:
