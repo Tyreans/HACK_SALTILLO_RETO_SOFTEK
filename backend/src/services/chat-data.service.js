@@ -4,7 +4,6 @@ import * as Tienda from "../models/tienda.model.js";
 import * as Competencia from "../models/competencia.model.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const DEFAULT_RANGE_DAYS = 7;
 
 export const databaseTools = [
   {
@@ -14,7 +13,7 @@ export const databaseTools = [
   },
   {
     name: "resumir_ventas",
-    description: "Consulta ventas netas, unidades y descuentos. Puede agrupar por total, día, tienda o categoría. Sin fechas, usa los últimos 7 días disponibles.",
+    description: "Consulta ventas netas, unidades y descuentos. Puede agrupar por total, día, tienda o categoría. Sin fechas, consulta todo el historial disponible.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -27,7 +26,7 @@ export const databaseTools = [
   },
   {
     name: "productos_mas_vendidos",
-    description: "Lista los productos con más unidades vendidas en un periodo. Sin fechas, usa los últimos 7 días disponibles.",
+    description: "Lista los productos con más unidades vendidas en un periodo. Sin fechas, consulta todo el historial disponible.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -126,23 +125,23 @@ function resultLimit(value, fallback, maximum) {
   return value;
 }
 
-async function getDateRange(table) {
-  const { rows } = await query(`SELECT min(date)::text AS desde, max(date)::text AS hasta FROM ${table}`);
+async function getDateRange(table, storeId = null) {
+  const { rows } = await query(
+    `SELECT min(date)::text AS desde, max(date)::text AS hasta FROM ${table}
+      WHERE ($1::text IS NULL OR store_id = $1)`,
+    [storeId]
+  );
   return rows[0];
 }
 
 async function resolveSalesRange(args) {
   let desde = validDate(args.desde, "desde");
   let hasta = validDate(args.hasta, "hasta");
-  const range = await getDateRange("sales_daily");
+  const range = await getDateRange("sales_daily", optionalText(args.tienda, "tienda"));
   if (!range.hasta) return { desde: null, hasta: null };
 
   hasta ||= range.hasta;
-  if (!desde) {
-    const lastDay = new Date(`${hasta}T00:00:00Z`);
-    lastDay.setUTCDate(lastDay.getUTCDate() - (DEFAULT_RANGE_DAYS - 1));
-    desde = lastDay.toISOString().slice(0, 10);
-  }
+  desde ||= range.desde;
   if (desde > hasta) throw new Error("La fecha inicial no puede ser posterior a la fecha final.");
   return { desde, hasta };
 }
@@ -212,7 +211,9 @@ async function inventory(args) {
   }
   const soloAlertas = args.soloAlertas === true;
   const { rows: latestRows } = await query(
-    `SELECT max(date)::text AS fecha FROM inventory_daily`
+    `SELECT max(date)::text AS fecha FROM inventory_daily
+      WHERE ($1::text IS NULL OR store_id = $1)`,
+    [tienda]
   );
   const fechaConsulta = fecha || latestRows[0].fecha;
   if (!fechaConsulta) return { mensaje: "No hay inventario cargado en la base de datos.", filas: [] };

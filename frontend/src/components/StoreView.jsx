@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './StoreView.css';
 import InventoryModal from './InventoryModal';
 import UnifiedSuggestionModal from './UnifiedSuggestionModal';
@@ -23,6 +23,8 @@ export default function StoreView({
   const [dashboardData, setDashboardData] = useState(() => fallbackStoreDetails[storeId] || fallbackStoreDetails.S001);
   const [inventoryList, setInventoryList] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+  const [recommendationsError, setRecommendationsError] = useState('');
 
   // Estado del Avatar: predeterminado siempre en 'good' (AVATAR-GOOD.gif), conmutable a 'bad'
   const [avatarMood, setAvatarMood] = useState(() => (store?.variationPct < -5 ? 'bad' : 'good'));
@@ -62,16 +64,26 @@ export default function StoreView({
   // Carga reactiva de sugerencias por tipo al abrir el modal
   useEffect(() => {
     if (!activeSuggestionModal) return;
+    let isMounted = true;
+    setRecommendationsLoading(true);
+    setRecommendationsError('');
     getStoreRecommendations(storeId, activeSuggestionModal).then((recs) => {
-      if (recs) {
+      if (isMounted) {
         setRecommendations((prev) => {
           const others = prev.filter((r) => r.tipo !== activeSuggestionModal);
           return [...others, ...recs];
         });
       }
     }).catch((error) => {
+      if (!isMounted) return;
+      setRecommendationsError(error.message);
       onShowAlert?.({ type: 'error', message: `No se pudieron cargar las recomendaciones: ${error.message}` });
+    }).finally(() => {
+      if (isMounted) setRecommendationsLoading(false);
     });
+    return () => {
+      isMounted = false;
+    };
   }, [activeSuggestionModal, storeId, onShowAlert]);
 
   // Aceptar / Rechazar recomendación con verificación de respuesta
@@ -115,6 +127,30 @@ export default function StoreView({
   const peores = dashboardData?.peores_ventas || fallbackStoreDetails.S001.peores_ventas;
   const estadisticas = dashboardData?.estadisticas || fallbackStoreDetails.S001.estadisticas;
   const inventoryBadge = dashboardData?.inventario_badge || { bajos: 2, total_items: 48 };
+  const restockRecommendations = useMemo(
+    () => recommendations.filter((r) => r.tipo === 'reposicion' && r.estado === 'pendiente'),
+    [recommendations]
+  );
+  const promoRecommendations = useMemo(
+    () => recommendations.filter((r) => r.tipo === 'promocion' && r.estado === 'pendiente'),
+    [recommendations]
+  );
+  const activeRecommendations = useMemo(
+    () => recommendations.filter((r) => r.tipo === activeSuggestionModal
+      && (activeSuggestionModal === 'precio' || r.estado === 'pendiente')),
+    [recommendations, activeSuggestionModal]
+  );
+  const suggestionLabel = (item) => item.tipo === 'reposicion'
+    ? `${item.name} (+${item.stockSugerido ?? item.cantidadDeseada ?? '—'} u.)`
+    : `${item.name} (${item.descuentoSugerido ?? '—'}% OFF)`;
+  const badgeForRecommendations = (items) => {
+    if (!items.length) return { className: 'baja', text: 'Sin pendientes' };
+    if (items.some((item) => item.prioridad === 'alta')) return { className: 'alta', text: 'Prioridad alta' };
+    if (items.some((item) => item.prioridad === 'media')) return { className: 'media', text: 'Prioridad media' };
+    return { className: 'baja', text: 'Prioridad baja' };
+  };
+  const restockBadge = badgeForRecommendations(restockRecommendations);
+  const promoBadge = badgeForRecommendations(promoRecommendations);
 
   return (
     <div className="store-view-container">
@@ -278,8 +314,10 @@ export default function StoreView({
             {/* Globo de diálogo */}
             <div className="avatar-speech-bubble">
               {avatarMood === 'good'
-                ? `¡Hola! Bienvenido a ${store?.name || 'nuestra sucursal'}. Las ventas de café van en aumento y el turno está operando al 100%.`
-                : `¡Alerta operativa! Detectamos baja rotación en repostería y 2 productos con stock crítico para el fin de semana.`}
+                ? `¡Hola! Bienvenido a ${store?.name || 'nuestra sucursal'}. Revisa las recomendaciones para conocer el estado actual de la operación.`
+                : restockRecommendations.length
+                  ? `Hay ${restockRecommendations.length} recomendaciones de reposición pendientes. Revisa las cantidades calculadas con el inventario y las ventas disponibles.`
+                  : 'No hay alertas de reposición pendientes cargadas. Consulta el módulo para generar recomendaciones actuales.'}
             </div>
 
             {/* Capa 1: Avatar (AVATAR-GOOD.gif o AVATAR-BAD.gif) */}
@@ -319,16 +357,19 @@ export default function StoreView({
             <div className="big-card-top">
               <div className="big-card-icon-wrap amber">📦</div>
               <div className="big-card-meta">
-                <span className="big-card-badge alta">Prioridad Alta</span>
+                <span className={`big-card-badge ${restockBadge.className}`}>{restockBadge.text}</span>
                 <h3 className="big-card-title">Reposición de Stock</h3>
               </div>
             </div>
             <p className="big-card-desc">
-              3 productos con alerta inminente de quiebre de stock antes del fin de semana.
+              {restockRecommendations.length
+                ? `${restockRecommendations.length} recomendaciones pendientes basadas en el inventario y el historial de ventas.`
+                : 'Abre el módulo para consultar el inventario y generar recomendaciones actuales.'}
             </p>
             <div className="big-card-chips">
-              <span className="big-card-chip">☕ Café espresso (+38 u.)</span>
-              <span className="big-card-chip">🥑 Aguacates (+17 kg)</span>
+              {restockRecommendations.slice(0, 2).map((item) => (
+                <span className="big-card-chip" key={item.id}>{item.emoji} {suggestionLabel(item)}</span>
+              ))}
             </div>
             <div className="big-card-cta">
               <span>Abrir orden de reposición</span>
@@ -345,16 +386,19 @@ export default function StoreView({
             <div className="big-card-top">
               <div className="big-card-icon-wrap purple">🏷️</div>
               <div className="big-card-meta">
-                <span className="big-card-badge media">Impacto Alto</span>
+                <span className={`big-card-badge ${promoBadge.className}`}>{promoBadge.text}</span>
                 <h3 className="big-card-title">Promociones Dinámicas</h3>
               </div>
             </div>
             <p className="big-card-desc">
-              Combos matutinos y descuentos para acelerar rotación y evitar mermas.
+              {promoRecommendations.length
+                ? `${promoRecommendations.length} recomendaciones pendientes según el inventario y la fecha de retiro de productos.`
+                : 'Abre el módulo para consultar inventario y fechas de retiro actuales.'}
             </p>
             <div className="big-card-chips">
-              <span className="big-card-chip">🥐 Combo Mañana (20% OFF)</span>
-              <span className="big-card-chip">☕ Espresso (30% OFF)</span>
+              {promoRecommendations.slice(0, 2).map((item) => (
+                <span className="big-card-chip" key={item.id}>{item.emoji} {suggestionLabel(item)}</span>
+              ))}
             </div>
             <div className="big-card-cta">
               <span>Gestionar y activar promociones</span>
@@ -410,11 +454,9 @@ export default function StoreView({
       {activeSuggestionModal && (
         <UnifiedSuggestionModal
           type={activeSuggestionModal}
-          items={['reposicion', 'promocion'].includes(activeSuggestionModal)
-            ? recommendations.filter((r) => r.tipo === activeSuggestionModal)
-            : recommendations.filter((r) => r.tipo === activeSuggestionModal).length > 0
-              ? recommendations.filter((r) => r.tipo === activeSuggestionModal)
-              : undefined}
+          items={activeRecommendations}
+          isLoading={recommendationsLoading}
+          error={recommendationsError}
           onClose={() => setActiveSuggestionModal(null)}
           onApplyAction={async (item, actionType) => {
             if (actionType === 'accept') {

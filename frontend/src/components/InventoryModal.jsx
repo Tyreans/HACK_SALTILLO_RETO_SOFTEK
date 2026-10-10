@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { downloadInventoryExcel } from '../services/storeApi';
+import { sendAssistantMessage } from '../services/assistantApi';
 import './InventoryModal.css';
 
 export default function InventoryModal({
@@ -15,6 +16,7 @@ export default function InventoryModal({
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiSessionId, setAiSessionId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
@@ -56,36 +58,16 @@ export default function InventoryModal({
     setAiAnswer('');
 
     try {
-      const lowStockNames = inventory.filter((i) => i.is_low).map((i) => i.name).join(', ');
-      const res = await fetch(`http://localhost:3002/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mensaje: `Sobre el inventario de la sucursal ${store?.name || 'Chespi'}: ${query}. Productos con bajo stock actualmente: ${lowStockNames}`,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setAiAnswer(data.respuesta || data.mensaje || 'Análisis completado.');
-      } else {
-        throw new Error('API offline');
-      }
-    } catch {
-      // Simulación de respuesta inteligente de Gemini
-      if (query.toLowerCase().includes('quiebre') || query.toLowerCase().includes('riesgo') || query.toLowerCase().includes('bajo')) {
-        setAiAnswer(
-          `🔍 Análisis Gemini: Granos de café (42 u. vs mín 50) y Aguacates (12 kg vs mín 20 kg) presentan riesgo crítico de quiebre en las próximas 36 horas debido a la alta afluencia proyectada del fin de semana. Se recomienda ordenar reposición inmediata.`
-        );
-      } else if (query.toLowerCase().includes('merma') || query.toLowerCase().includes('perecedero')) {
-        setAiAnswer(
-          `📊 Análisis Gemini: Aguacates y Pan de centeno tienen rotación lenta esta semana. Se sugiere activar el combo matutino con 20% de descuento para evitar merma por caducidad.`
-        );
-      } else {
-        setAiAnswer(
-          `✨ Análisis Gemini: El inventario actual de ${store?.name || 'la sucursal'} tiene un cumplimiento del 84%. Se detectan 2 productos debajo del stock mínimo recomendado y un valor total proyectado de $18,420 MXN.`
-        );
-      }
+      const storeContext = store
+        ? ` de la sucursal ${store.name || store.id} (${store.id})`
+        : '';
+      const prompt = `[Contexto de inventario${storeContext}]. ${query}`;
+      const data = await sendAssistantMessage(prompt, aiSessionId);
+      if (data.sessionId) setAiSessionId(data.sessionId);
+      setAiAnswer(data.response);
+    } catch (error) {
+      console.error('No se pudo consultar el asistente desde inventario:', error);
+      setAiAnswer(`⚠️ ${error.message}`);
     } finally {
       setIsAiLoading(false);
     }

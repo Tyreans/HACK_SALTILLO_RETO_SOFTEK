@@ -167,7 +167,7 @@ export default function App() {
       {chatDrawer.isOpen && (
         <ChatDrawer
           initialQuery={chatDrawer.query}
-          store={selectedStore}
+          store={currentView === 'store' ? selectedStore : null}
           onClose={() => setChatDrawer({ isOpen: false, query: '' })}
           onNavigateToStore={(targetStoreId) => {
             const found = stores.find((s) => s.id === targetStoreId);

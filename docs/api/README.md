@@ -225,17 +225,18 @@ También se pueden cargar por HTTP con `POST /api/competencia/precios` (máximo 
 
 ### `POST /api/chat`
 
-La cajera responde sobre la tienda usando el resumen del dashboard (últimos 7 días) como contexto. La respuesta es corta (máximo 2 frases) porque está pensada para leerse en voz alta.
+Asistente conversacional de Gemini con herramientas de solo lectura para consultar ventas, inventario, productos, tiendas y precios de rivales. Las consultas de ventas sin fechas usan todo el historial disponible; inventario consulta la fecha más reciente disponible para la tienda indicada. El frontend, los accesos rápidos del buscador y el popup de inventario usan este mismo endpoint.
 
 ```jsonc
 // Petición
-{ "tienda": "S001", "mensaje": "¿Qué se vendió mejor esta semana?" }
+{ "message": "¿Qué productos se vendieron más en S001?", "sessionId": "opcional" }
 // Respuesta
-{ "success": true, "data": { "respuesta": "Lo más vendido fue el café espresso, con 4.8 mil en ventas." } }
+{ "response": "1. Café espresso ...", "sessionId": "..." }
 ```
 
-- `tienda`: formato `S###`, obligatoria.
-- `mensaje`: texto de 1 a 300 caracteres.
+- `message`: texto de 1 a 4000 caracteres.
+- `sessionId`: opcional; devuelve un identificador para continuar la conversación.
+- Errores de Gemini, la base o el límite de solicitudes se devuelven como respuestas HTTP no exitosas con un mensaje explícito; los clientes no deben sustituirlas por respuestas simuladas.
 
 ### `POST /api/voz`
 

@@ -1,102 +1,10 @@
 import { useState, useEffect } from 'react';
 import './UnifiedSuggestionModal.css';
 
-// Datos predeterminados con Razón de la IA para cada categoría
+// Las categorías que dependen de la base no tienen datos de demostración como fallback.
 export const defaultModuleSuggestions = {
-  reposicion: [
-    {
-      id: 'rep-1',
-      name: 'Café espresso (Grano 1kg)',
-      sku: 'SKU-COF-01',
-      statusBadge: 'Bajo stock',
-      prioClass: 'alta',
-      emoji: '☕',
-      razon_ia: 'Se proyecta aumento de 35% en flujo de clientes matutinos este fin de semana. El inventario actual no resistirá el sábado.',
-      stockActual: 12,
-      stockSugerido: 38,
-      stockObjetivo: 50,
-      fechaProgramada: '14 oct 2026',
-      cantidadDeseada: 38,
-      motivo: 'Demanda de fin de semana',
-    },
-    {
-      id: 'rep-2',
-      name: 'Aguacates (KG)',
-      sku: 'SKU-BK-02',
-      statusBadge: 'Stock crítico',
-      prioClass: 'alta',
-      emoji: '🥑',
-      razon_ia: 'Existencias en 8 kg frente a consumo semanal de 25 kg. Proveedor requiere 48 horas de tiempo de entrega estándar.',
-      stockActual: 8,
-      stockSugerido: 17,
-      stockObjetivo: 25,
-      fechaProgramada: '17 oct 2026',
-      cantidadDeseada: 17,
-      motivo: 'Tiempo de entrega proveedor',
-    },
-    {
-      id: 'rep-3',
-      name: 'Batido de plátano (Ingredientes)',
-      sku: 'SKU-BEV-03',
-      statusBadge: 'Bajo stock',
-      prioClass: 'alta',
-      emoji: '🍌',
-      razon_ia: 'Ingredientes para batidos registran rotación acelerada. Se agotará en las próximas 36 horas.',
-      stockActual: 5,
-      stockSugerido: 10,
-      stockObjetivo: 15,
-      fechaProgramada: '21 oct 2026',
-      cantidadDeseada: 10,
-      motivo: 'Reposición preventiva',
-    },
-  ],
-  promocion: [
-    {
-      id: 'promo-1',
-      name: 'Combo Mañana (Té de jazmín + Pan de centeno)',
-      sku: 'SKU-TEA-04',
-      statusBadge: '20% OFF Sugerido',
-      prioClass: 'promo',
-      emoji: '🥐',
-      razon_ia: 'El Pan de centeno tiene vida útil de 3 días y el Té de jazmín tiene rotación lenta. El combo incrementa la conversión en 18%.',
-      precioRegular: 5.70,
-      precioPromo: 4.50,
-      descuentoSugerido: 20,
-      descuentoDeseado: 20,
-      horario: '7:00 am – 11:00 am',
-      motivo: 'Evitar merma matutina',
-    },
-    {
-      id: 'promo-2',
-      name: 'Café Espresso Premium 1kg',
-      sku: 'SKU-COF-01',
-      statusBadge: '30% OFF Sugerido',
-      prioClass: 'promo',
-      emoji: '☕',
-      razon_ia: 'Estimula la compra recurrente de oficinas corporativas cercanas en horario pico de 8:00 am a 10:00 am.',
-      precioRegular: 18.00,
-      precioPromo: 12.60,
-      descuentoSugerido: 30,
-      descuentoDeseado: 30,
-      horario: 'Todo el día',
-      motivo: 'Fidelización corporativa',
-    },
-    {
-      id: 'promo-3',
-      name: 'Batido de Plátano Energético',
-      sku: 'SKU-BEV-03',
-      statusBadge: '15% OFF Sugerido',
-      prioClass: 'promo',
-      emoji: '🍌',
-      razon_ia: 'Captura compras por impulso de estudiantes y trabajadores jóvenes al inicio de la jornada.',
-      precioRegular: 3.50,
-      precioPromo: 2.95,
-      descuentoSugerido: 15,
-      descuentoDeseado: 15,
-      horario: '12:00 pm – 4:00 pm',
-      motivo: 'Impulso vespertino',
-    },
-  ],
+  reposicion: [],
+  promocion: [],
   precio: [
     {
       id: 'prc-1',
@@ -152,7 +60,7 @@ const moduleMeta = {
   },
   promocion: {
     title: '🏷️ Promociones y Ofertas Sugeridas',
-    subtitle: 'Estrategias de descuento dinámico para productos de lenta rotación y combos de alta conversión.',
+    subtitle: 'Descuentos calculados con inventario, fecha de retiro, precio vigente y costo del producto.',
     accentClass: 'promocion',
     confirmLabel: 'Activar Promoción',
   },
@@ -167,11 +75,13 @@ const moduleMeta = {
 export default function UnifiedSuggestionModal({
   type = 'precio',
   items: initialItemsProp,
+  isLoading = false,
+  error = '',
   onClose,
   onApplyAction,
 }) {
   const meta = moduleMeta[type] || moduleMeta.precio;
-  const [items, setItems] = useState(() => initialItemsProp || defaultModuleSuggestions[type] || []);
+  const [items, setItems] = useState(() => initialItemsProp ?? defaultModuleSuggestions[type] ?? []);
 
   useEffect(() => {
     if (Array.isArray(initialItemsProp)) {
@@ -186,13 +96,25 @@ export default function UnifiedSuggestionModal({
   };
 
   const handleStepQuantity = (id, delta) => {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, cantidadDeseada: Math.max(1, (item.cantidadDeseada || item.stockSugerido) + delta) }
-          : item
-      )
-    );
+    setItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      const quantity = item.cantidadDeseada ?? item.stockSugerido;
+      if (quantity == null || !Number.isFinite(Number(quantity))) return item;
+      return { ...item, cantidadDeseada: Math.max(1, Number(quantity) + delta) };
+    }));
+  };
+
+  const canAccept = (item) => {
+    if (type === 'reposicion') {
+      const quantity = Number(item.cantidadDeseada ?? item.stockSugerido);
+      return Number.isInteger(quantity) && quantity > 0;
+    }
+    if (type === 'promocion') {
+      const discount = Number(item.descuentoDeseado ?? item.descuentoSugerido);
+      return Number.isFinite(discount) && discount >= 1 && discount <= 90
+        && Boolean(item.fechaInicio) && Boolean(item.fechaFin);
+    }
+    return true;
   };
 
   const handleAcceptItem = async (item) => {
@@ -242,10 +164,19 @@ export default function UnifiedSuggestionModal({
         <div className="mac-modal-body">
           {items.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-              ✓ Todas las sugerencias de este módulo han sido atendidas.
+              {error
+                ? `No se pudieron cargar las recomendaciones: ${error}`
+                : isLoading
+                  ? 'Consultando recomendaciones actuales...'
+                  : 'No hay recomendaciones pendientes para esta tienda.'}
             </div>
           ) : (
-            items.map((item) => (
+            items.map((item, index) => {
+              const discount = Number(item.descuentoDeseado ?? item.descuentoSugerido);
+              const promoPrice = item.precioRegular == null || !Number.isFinite(discount)
+                ? null
+                : Math.round(Number(item.precioRegular) * (1 - discount / 100) * 100) / 100;
+              return (
               <article key={item.id} className="mac-item-card">
                 {/* 1. Imagen / Emoji del producto */}
                 <div className="mac-item-visual">{item.emoji}</div>
@@ -254,7 +185,7 @@ export default function UnifiedSuggestionModal({
                 <div className="mac-item-content">
                   {/* Nombre y Badge */}
                   <div className="mac-item-header-row">
-                    <h3 className="mac-item-title">{item.name}</h3>
+                    <h3 className="mac-item-title">{index + 1}. {item.name}</h3>
                     <span className={`mac-item-badge ${item.prioClass || ''}`}>
                       {item.statusBadge}
                     </span>
@@ -296,9 +227,6 @@ export default function UnifiedSuggestionModal({
                           <span>Sugerido reposición:</span>
                           <strong className="mac-val-suggested">+{item.stockSugerido ?? '—'} u.</strong>
                         </div>
-                        {type === 'promocion' && (
-                          <span className="mac-range-tag">Sobrante proyectado: {item.stockObjetivo ?? '—'} u.</span>
-                        )}
                       </>
                     )}
 
@@ -307,13 +235,14 @@ export default function UnifiedSuggestionModal({
                         <div className="mac-metric-point">
                           <span className="mac-dot-current" />
                           <span>Precio normal:</span>
-                          <strong className="mac-val-current">${Number(item.precioRegular).toFixed(2)}</strong>
+                          <strong className="mac-val-current">{item.precioRegular == null ? '—' : `$${Number(item.precioRegular).toFixed(2)}`}</strong>
                         </div>
                         <div className="mac-metric-point">
                           <span className="mac-dot-suggested" />
                           <span>Precio con descuento:</span>
-                          <strong className="mac-val-suggested">${Number(item.precioPromo).toFixed(2)}</strong>
+                          <strong className="mac-val-suggested">{promoPrice == null ? '—' : `$${promoPrice.toFixed(2)}`}</strong>
                         </div>
+                        <span className="mac-range-tag">Sobrante proyectado: {item.stockObjetivo ?? '—'} u.</span>
                         <span className="mac-range-tag">Vigencia: {item.fechaInicio || 'hoy'} – {item.fechaFin || 'por definir'}</span>
                       </>
                     )}
@@ -355,16 +284,20 @@ export default function UnifiedSuggestionModal({
                               type="button"
                               className="mac-stepper-btn"
                               onClick={() => handleStepQuantity(item.id, -1)}
+                              disabled={(item.cantidadDeseada ?? item.stockSugerido) == null
+                                || !Number.isFinite(Number(item.cantidadDeseada ?? item.stockSugerido))}
                             >
                               −
                             </button>
                             <span className="mac-stepper-val">
-                              {item.cantidadDeseada ?? item.stockSugerido ?? 1}
+                              {(item.cantidadDeseada ?? item.stockSugerido) == null ? '—' : item.cantidadDeseada ?? item.stockSugerido}
                             </span>
                             <button
                               type="button"
                               className="mac-stepper-btn"
                               onClick={() => handleStepQuantity(item.id, 1)}
+                              disabled={(item.cantidadDeseada ?? item.stockSugerido) == null
+                                || !Number.isFinite(Number(item.cantidadDeseada ?? item.stockSugerido))}
                             >
                               +
                             </button>
@@ -432,13 +365,15 @@ export default function UnifiedSuggestionModal({
                       type="button"
                       className="mac-btn-primary"
                       onClick={() => handleAcceptItem(item)}
+                      disabled={!canAccept(item)}
                     >
                       {meta.confirmLabel}
                     </button>
                   </div>
                 </div>
               </article>
-            ))
+              );
+            })
           )}
         </div>
       </div>

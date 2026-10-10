@@ -1,7 +1,5 @@
 // Servicio para interactuar con la API REST de Express (/api) con soporte de fallbacks robustos
-
-const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_API_BASE_URL)
-  || 'http://localhost:3002/api';
+import { API_BASE_URL } from './apiConfig';
 
 // Cache o datos iniciales mock enriquecidos basados en los bosquejos
 export const fallbackStoreDetails = {
@@ -153,48 +151,8 @@ export const initialInventoryItems = [
   },
 ];
 
-// Recomendaciones iniciales basadas en PANEL_PER_SUCURSAL.png y popups
+// Datos de demostración conservados únicamente para el módulo de precios.
 export const initialRecommendations = [
-  {
-    id: 101,
-    store_id: 'S001',
-    tipo: 'reposicion',
-    prioridad: 'alta',
-    sku: 'SKU-COF-01',
-    producto: 'Café espresso',
-    name: 'Café espresso (Grano 1kg)',
-    descripcion: 'Reponer café espresso y aguacates antes del fin de semana.',
-    razon_ia: 'Se proyecta aumento de 35% en flujo de clientes matutinos este fin de semana. El inventario actual no resistirá el sábado.',
-    emoji: '☕',
-    stockActual: 12,
-    stockSugerido: 38,
-    stockObjetivo: 50,
-    cantidadDeseada: 38,
-    fechaProgramada: '14 oct 2026',
-    estado: 'pendiente',
-    prioClass: 'alta',
-    statusBadge: 'Bajo stock',
-  },
-  {
-    id: 102,
-    store_id: 'S001',
-    tipo: 'promocion',
-    prioridad: 'media',
-    sku: 'SKU-TEA-04',
-    producto: 'Combo Mañana (Té de jazmín + Pan de centeno)',
-    name: 'Combo Mañana (Té de jazmín + Pan de centeno)',
-    descripcion: 'Ofrecer descuento en té de jazmín y pan de centeno para impulsar rotación.',
-    razon_ia: 'El Pan de centeno tiene vida útil de 3 días y el Té de jazmín tiene rotación lenta. El combo incrementa la conversión en 18%.',
-    precioRegular: 5.70,
-    precioPromo: 4.50,
-    descuentoSugerido: 20,
-    descuentoDeseado: 20,
-    horario: '7:00 am – 11:00 am',
-    emoji: '🥐',
-    estado: 'pendiente',
-    prioClass: 'promo',
-    statusBadge: '20% OFF Sugerido',
-  },
   {
     id: 103,
     store_id: 'S001',
@@ -223,9 +181,14 @@ export function normalizeRecommendation(row) {
   const isRep = tipo === 'reposicion';
   const isPromo = tipo === 'promocion';
 
-  const precioActual = Number(row.precio_actual) || (row.propuesta_original?.precio_actual ? Number(row.propuesta_original.precio_actual) : 4.50);
-  const precioSugerido = Number(row.precio_propuesto) || (row.propuesta_original?.precio_propuesto ? Number(row.propuesta_original.precio_propuesto) : precioActual);
-  const descPct = Number(row.descuento_pct ?? row.propuesta_original?.descuento_pct) || (isPrice ? 20 : 0);
+  const rawPrice = row.precio_actual ?? row.propuesta_original?.precio_actual;
+  const precioActual = rawPrice == null ? (isPrice ? 4.50 : null) : Number(rawPrice);
+  const rawSuggestedPrice = row.precio_propuesto ?? row.propuesta_original?.precio_propuesto;
+  const precioSugerido = rawSuggestedPrice == null
+    ? (isPrice ? precioActual : null)
+    : Number(rawSuggestedPrice);
+  const rawDiscount = row.descuento_pct ?? row.propuesta_original?.descuento_pct;
+  const descPct = rawDiscount == null ? (isPrice ? 20 : null) : Number(rawDiscount);
 
   // Rango de competencia si existe
   const minComp = row.competencia?.minimo ?? (precioActual * 0.85).toFixed(2);
@@ -248,7 +211,7 @@ export function normalizeRecommendation(row) {
       ? 'Precio sugerido disponible'
       : isRep
         ? 'Riesgo de quiebre'
-        : `${descPct}% OFF Sugerido`,
+        : `${descPct ?? '—'}% OFF Sugerido`,
     emoji,
     origen: row.origen || 'agente',
     estado: row.estado || 'pendiente',
@@ -269,7 +232,9 @@ export function normalizeRecommendation(row) {
 
     // Campos de Promoción
     precioRegular: precioActual,
-    precioPromo: Math.round(precioActual * (1 - descPct / 100) * 100) / 100,
+    precioPromo: precioActual == null || descPct == null
+      ? null
+      : Math.round(precioActual * (1 - descPct / 100) * 100) / 100,
     descuentoSugerido: descPct,
     descuentoDeseado: descPct,
     fechaInicio: row.fecha_inicio || '',
@@ -446,19 +411,21 @@ export async function getStoreRecommendations(storeId, tipo = null) {
       ? `${API_BASE_URL}/recomendaciones/${storeId}?tipo=${tipo}`
       : `${API_BASE_URL}/recomendaciones/${storeId}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const json = await res.json().catch(() => ({}));
     if (res.ok) {
-      const json = await res.json();
+      if (json.success === false) {
+        throw new Error(json.error?.message || `API /recomendaciones/${storeId} devolvió un error.`);
+      }
       const list = json.data || json.datos;
-      if (Array.isArray(list) && (list.length > 0 || tipo !== 'precio')) {
+      if (Array.isArray(list)) {
         return list.map(normalizeRecommendation);
       }
+      throw new Error(`API /recomendaciones/${storeId} devolvió una respuesta inesperada.`);
     }
-    if (tipo === 'reposicion' || tipo === 'promocion') {
-      throw new Error(`API /recomendaciones/${storeId} respondió ${res.status}`);
-    }
+    throw new Error(json.error?.message || `API /recomendaciones/${storeId} respondió ${res.status}.`);
   } catch (err) {
     console.warn(`API /recomendaciones/${storeId} no disponible:`, err.message);
-    if (tipo === 'reposicion' || tipo === 'promocion') throw err;
+    if (tipo !== 'precio') throw err;
   }
   return initialRecommendations.filter((r) => r.tipo === 'precio' && (!tipo || r.tipo === tipo));
 }

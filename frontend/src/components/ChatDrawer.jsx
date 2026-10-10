@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { sendAssistantMessage } from '../services/assistantApi';
 import './ChatDrawer.css';
 
 export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToStore }) {
@@ -14,12 +15,13 @@ export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToS
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
+  const sentInitialQueryRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const handleSend = async (queryText) => {
+  const handleSend = useCallback(async (queryText) => {
     const textToSend = queryText || inputMessage;
     if (!textToSend.trim() || isLoading) return;
 
@@ -28,53 +30,27 @@ export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToS
     setInputMessage('');
     setIsLoading(true);
 
-    // Preparar mensaje con contexto de sucursal si está seleccionada
-    const contextualQuery = store && !textToSend.toLowerCase().includes(store.id.toLowerCase())
-      ? `[Contexto de sucursal ${store.name} (${store.id})]: ${textToSend}`
+    const contextualQuery = store
+      ? `[Contexto de sucursal seleccionada: ${store.name} (${store.id})]. ${textToSend}`
       : textToSend;
 
     try {
-      // Llamar al backend Express (/api/chat con sessionId multi-turno)
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: contextualQuery,
-          sessionId: sessionId || undefined,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data.response) {
-        if (data.sessionId) setSessionId(data.sessionId);
-        setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
-      } else {
-        const errorMsg = data.error || data.message || (res.status === 429 ? 'Límite de solicitudes de IA alcanzado. Espera un momento.' : 'No se pudo obtener respuesta del asistente.');
-        setMessages((prev) => [...prev, { role: 'assistant', text: `⚠️ ${errorMsg}` }]);
-      }
-    } catch {
-      // Fallback inteligente en caso de desconexión total del servidor
-      setTimeout(() => {
-        let fallbackReply = '';
-        const q = textToSend.toLowerCase();
-
-        if (q.includes('merma') || q.includes('caducidad')) {
-          fallbackReply = `En la red de Saltillo, **Sucursal Furby** y **Sucursal Acuña** presentan la mayor merma por caducidad (16.8% y 14.2% respectivamente). Se recomienda activar un 30% de descuento en perecederos como Batidos y Aguacates.`;
-        } else if (q.includes('chespi') || q.includes('mejor') || q.includes('vende')) {
-          fallbackReply = `**Sucursal Chespi (S001)** es la tienda líder en ventas esta semana con **$158,420 MXN** (+18.4%), impulsada por alta rotación de Café Espresso 1kg y Donut Holes.`;
-        } else if (q.includes('reponer') || q.includes('restock') || q.includes('stock')) {
-          fallbackReply = `Recomendación de Re-Stock para **${store ? store.name : 'la red'}**: Se sugiere pedir **38 uds de Café espresso**, **17 kg de Aguacate** y **10 kg de Plátano** para evitar quiebre de stock en los próximos 3 días.`;
-        } else {
-          fallbackReply = `Basado en los datos de la red Otzo (${store ? store.name : 'Todas las sucursales'}): La operación mantiene un margen bruto promedio del 71.2%. ¿Deseas generar una orden de compra o revisar promociones sugeridas?`;
-        }
-
-        setMessages((prev) => [...prev, { role: 'assistant', text: fallbackReply }]);
-      }, 700);
+      const data = await sendAssistantMessage(contextualQuery, sessionId);
+      if (data.sessionId) setSessionId(data.sessionId);
+      setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: 'assistant', text: `⚠️ ${error.message}` }]);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [inputMessage, isLoading, sessionId, store]);
+
+  useEffect(() => {
+    const query = initialQuery?.trim();
+    if (!query || sentInitialQueryRef.current === query) return;
+    sentInitialQueryRef.current = query;
+    handleSend(query);
+  }, [initialQuery, handleSend]);
 
   const quickPrompts = [
     '¿Qué tienda tiene mayor merma?',
