@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import './App.css';
 import DashboardMap from './components/DashboardMap';
 import StoreView from './components/StoreView';
