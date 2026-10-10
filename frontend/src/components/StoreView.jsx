@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './StoreView.css';
 import InventoryModal from './InventoryModal';
 import UnifiedSuggestionModal from './UnifiedSuggestionModal';
@@ -6,6 +6,7 @@ import {
   getDashboardData,
   getStoreInventory,
   getStoreRecommendations,
+  getRecommendationCounts,
   fallbackStoreDetails,
   acceptRecommendationApi,
   rejectRecommendationApi,
@@ -23,29 +24,102 @@ export default function StoreView({
   const [dashboardData, setDashboardData] = useState(() => fallbackStoreDetails[storeId] || fallbackStoreDetails.S001);
   const [inventoryList, setInventoryList] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
+  const [recCounts, setRecCounts] = useState(null);
 
-  // Estado del Avatar: predeterminado siempre en 'good' (AVATAR-GOOD.gif), conmutable a 'bad'
-  const [avatarMood, setAvatarMood] = useState(() => (store?.variationPct < -5 ? 'bad' : 'good'));
+  // Estado del Avatar: determinado automáticamente por el rendimiento real de la sucursal (no editable manualmente por el cliente)
+  const avatarMood = (dashboardData?.animo?.estado === 'triste' || (store?.variationPct != null && store.variationPct < -5) || store?.status === 'low' || store?.avatar === 'worried')
+    ? 'bad'
+    : 'good';
 
   // Modales abiertos
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [activeSuggestionModal, setActiveSuggestionModal] = useState(null); // 'reposicion' | 'promocion' | 'precio' | null
+
+  // Movimiento libre (arrastrable) de la burbuja de diálogo del personaje
+  const [bubbleOffset, setBubbleOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingBubble, setIsDraggingBubble] = useState(false);
+  const dragStartRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
+
+  const handleBubbleMouseDown = (e) => {
+    if (e.button !== 0) return;
+    setIsDraggingBubble(true);
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: bubbleOffset.x,
+      initialY: bubbleOffset.y,
+    };
+  };
+
+  const handleBubbleTouchStart = (e) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    setIsDraggingBubble(true);
+    dragStartRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      initialX: bubbleOffset.x,
+      initialY: bubbleOffset.y,
+    };
+  };
+
+  useEffect(() => {
+    if (!isDraggingBubble) return;
+
+    const handleMouseMove = (e) => {
+      const dx = e.clientX - dragStartRef.current.startX;
+      const dy = e.clientY - dragStartRef.current.startY;
+      setBubbleOffset({
+        x: dragStartRef.current.initialX + dx,
+        y: dragStartRef.current.initialY + dy,
+      });
+    };
+
+    const handleTouchMove = (e) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - dragStartRef.current.startX;
+      const dy = touch.clientY - dragStartRef.current.startY;
+      setBubbleOffset({
+        x: dragStartRef.current.initialX + dx,
+        y: dragStartRef.current.initialY + dy,
+      });
+    };
+
+    const handleEndDrag = () => {
+      setIsDraggingBubble(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleEndDrag);
+    window.addEventListener('touchmove', handleTouchMove);
+    window.addEventListener('touchend', handleEndDrag);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleEndDrag);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleEndDrag);
+    };
+  }, [isDraggingBubble]);
 
   // Carga inicial de datos de la sucursal
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
-      const [dash, inv, recs] = await Promise.all([
+      const [dash, inv, recs, counts] = await Promise.all([
         getDashboardData(storeId),
         getStoreInventory(storeId),
         getStoreRecommendations(storeId),
+        getRecommendationCounts(storeId),
       ]);
 
       if (isMounted) {
         if (dash) setDashboardData(dash);
         if (inv) setInventoryList(inv);
         if (recs) setRecommendations(recs);
+        if (counts) setRecCounts(counts);
       }
     }
 
@@ -66,16 +140,22 @@ export default function StoreView({
             const others = prev.filter((r) => r.tipo !== activeSuggestionModal);
             return [...others, ...recs];
           });
+          getRecommendationCounts(storeId).then((c) => {
+            if (c) setRecCounts(c);
+          });
         }
       });
     }
-  }, [activeSuggestionModal, storeId]);
+  }, [activeSuggestionModal, storeId, recommendations]);
 
   // Aceptar / Rechazar recomendación con verificación de respuesta
   const handleAcceptRec = async (recId, recTitle, payload = {}) => {
     const res = await acceptRecommendationApi(recId, payload);
     if (res.ok) {
       setRecommendations((prev) => prev.filter((r) => r.id !== recId));
+      getRecommendationCounts(storeId).then((c) => {
+        if (c) setRecCounts(c);
+      });
       onShowAlert?.({
         type: 'success',
         message: `Recomendación aceptada: "${recTitle}". Enviada a ejecución.`,
@@ -94,6 +174,9 @@ export default function StoreView({
     const res = await rejectRecommendationApi(recId, motivo || 'Rechazado por gerente de sucursal');
     if (res.ok) {
       setRecommendations((prev) => prev.filter((r) => r.id !== recId));
+      getRecommendationCounts(storeId).then((c) => {
+        if (c) setRecCounts(c);
+      });
       onShowAlert?.({
         type: 'info',
         message: `Recomendación descartada: "${recTitle}". Guardado en memoria IA.`,
@@ -112,6 +195,12 @@ export default function StoreView({
   const peores = dashboardData?.peores_ventas || fallbackStoreDetails.S001.peores_ventas;
   const estadisticas = dashboardData?.estadisticas || fallbackStoreDetails.S001.estadisticas;
   const inventoryBadge = dashboardData?.inventario_badge || { bajos: 2, total_items: 48 };
+
+  // Conteo de recomendaciones en la DB de cada tipo y linkeado a la sucursal
+  const reposicionCount = recCounts?.conteos?.reposicion?.total ?? recommendations.filter((r) => r.tipo === 'reposicion').length;
+  const promocionCount = recCounts?.conteos?.promocion?.total ?? recommendations.filter((r) => r.tipo === 'promocion').length;
+  const precioCount = recCounts?.conteos?.precio?.total ?? recommendations.filter((r) => r.tipo === 'precio').length;
+  const totalCount = recCounts?.total ?? (reposicionCount + promocionCount + precioCount);
 
   return (
     <div className="store-view-container">
@@ -133,23 +222,6 @@ export default function StoreView({
         </div>
 
         <div className="store-nav-right">
-          {/* Switch de modo de avatar para pruebas Good/Bad */}
-          <div className="avatar-mood-switcher" title="Alternar estado de ánimo del avatar según rendimiento">
-            <button
-              type="button"
-              className={`mood-btn ${avatarMood === 'good' ? 'active good' : ''}`}
-              onClick={() => setAvatarMood('good')}
-            >
-              😊 Good
-            </button>
-            <button
-              type="button"
-              className={`mood-btn ${avatarMood === 'bad' ? 'active bad' : ''}`}
-              onClick={() => setAvatarMood('bad')}
-            >
-              😟 Alert
-            </button>
-          </div>
 
           <button
             type="button"
@@ -182,7 +254,7 @@ export default function StoreView({
             </div>
 
             <div className="store-products-list">
-              {(mejores.productos || []).map((prod, idx) => (
+              {(mejores.productos || []).slice(0, 5).map((prod, idx) => (
                 <div key={idx} className="store-product-row">
                   <div className="store-prod-left">
                     <span className="store-prod-rank">{prod.rank || idx + 1}</span>
@@ -208,7 +280,7 @@ export default function StoreView({
             </div>
 
             <div className="store-products-list">
-              {(peores.productos || []).map((prod, idx) => (
+              {(peores.productos || []).slice(0, 5).map((prod, idx) => (
                 <div key={idx} className="store-product-row">
                   <div className="store-prod-left">
                     <span className="store-prod-rank">{prod.rank || idx + 1}</span>
@@ -272,8 +344,17 @@ export default function StoreView({
         {/* COLUMNA CENTRAL: ESCENARIO CON AVATAR DETRÁS DEL MOSTRADOR (DESKTOP.PNG) */}
         <section className="store-col-center" aria-label="Mostrador y encargado virtual de sucursal">
           <div className="desk-avatar-stage">
-            {/* Globo de diálogo */}
-            <div className="avatar-speech-bubble">
+            {/* Globo de diálogo con soporte de movimiento libre */}
+            <div
+              className={`avatar-speech-bubble ${isDraggingBubble ? 'is-dragging' : ''}`}
+              style={{
+                transform: `translate(calc(-50% + ${bubbleOffset.x}px), ${bubbleOffset.y}px)`,
+              }}
+              onMouseDown={handleBubbleMouseDown}
+              onTouchStart={handleBubbleTouchStart}
+              onDoubleClick={() => setBubbleOffset({ x: 0, y: 0 })}
+              title="Arrastra para mover libremente (Doble clic para restablecer)"
+            >
               {avatarMood === 'good'
                 ? `¡Hola! Bienvenido a ${store?.name || 'nuestra sucursal'}. Las ventas de café van en aumento y el turno está operando al 100%.`
                 : `¡Alerta operativa! Detectamos baja rotación en repostería y 2 productos con stock crítico para el fin de semana.`}
@@ -298,87 +379,98 @@ export default function StoreView({
           </div>
         </section>
 
-        {/* COLUMNA DERECHA: 3 BOTONES MUY GRANDES DE SUGERENCIAS IA */}
+        {/* COLUMNA DERECHA: PANELES DE SUGERENCIAS IA (SOLO COUNT EN DB LINKEADO A LA SUCURSAL) */}
         <section className="store-col-right" aria-label="Sugerencias operativas de IA">
           <header className="recs-header-wrap">
             <div className="recs-header-left">
               <h2>Sugerencias de IA</h2>
-              <p>3 módulos de optimización operativa</p>
             </div>
           </header>
 
-          {/* BOTÓN 1 MUY GRANDE: REPOSICIÓN */}
+          {/* BOTÓN 1: REPOSICIÓN (COUNT DE DB LINKEADO A SUCURSAL) */}
           <button
             type="button"
             className="big-suggestion-card reposicion"
             onClick={() => setActiveSuggestionModal('reposicion')}
+            title={`Ver ${reposicionCount} recomendaciones de reposición para ${store?.name || storeId}`}
           >
             <div className="big-card-top">
               <div className="big-card-icon-wrap amber">📦</div>
               <div className="big-card-meta">
-                <span className="big-card-badge alta">Prioridad Alta</span>
+                <span className="big-card-badge alta">Reposición</span>
                 <h3 className="big-card-title">Reposición de Stock</h3>
               </div>
             </div>
-            <p className="big-card-desc">
-              3 productos con alerta inminente de quiebre de stock antes del fin de semana.
-            </p>
-            <div className="big-card-chips">
-              <span className="big-card-chip">☕ Café espresso (+38 u.)</span>
-              <span className="big-card-chip">🥑 Aguacates (+17 kg)</span>
+
+            <div className="big-card-count-block">
+              <div className="big-card-count-stat">
+                <span className="big-card-count-number">{reposicionCount}</span>
+                <span className="big-card-count-unit">
+                  {reposicionCount === 1 ? 'recomendación en DB' : 'recomendaciones en DB'}
+                </span>
+              </div>
             </div>
+
             <div className="big-card-cta">
               <span>Abrir orden de reposición</span>
               <span className="big-card-arrow">→</span>
             </div>
           </button>
 
-          {/* BOTÓN 2 MUY GRANDE: PROMOCIONES */}
+          {/* BOTÓN 2: PROMOCIONES (COUNT DE DB LINKEADO A SUCURSAL) */}
           <button
             type="button"
             className="big-suggestion-card promocion"
             onClick={() => setActiveSuggestionModal('promocion')}
+            title={`Ver ${promocionCount} promociones dinámicas para ${store?.name || storeId}`}
           >
             <div className="big-card-top">
               <div className="big-card-icon-wrap purple">🏷️</div>
               <div className="big-card-meta">
-                <span className="big-card-badge media">Impacto Alto</span>
+                <span className="big-card-badge media">Promoción</span>
                 <h3 className="big-card-title">Promociones Dinámicas</h3>
               </div>
             </div>
-            <p className="big-card-desc">
-              Combos matutinos y descuentos para acelerar rotación y evitar mermas.
-            </p>
-            <div className="big-card-chips">
-              <span className="big-card-chip">🥐 Combo Mañana (20% OFF)</span>
-              <span className="big-card-chip">☕ Espresso (30% OFF)</span>
+
+            <div className="big-card-count-block">
+              <div className="big-card-count-stat">
+                <span className="big-card-count-number">{promocionCount}</span>
+                <span className="big-card-count-unit">
+                  {promocionCount === 1 ? 'recomendación en DB' : 'recomendaciones en DB'}
+                </span>
+              </div>
             </div>
+
             <div className="big-card-cta">
               <span>Gestionar y activar promociones</span>
               <span className="big-card-arrow">→</span>
             </div>
           </button>
 
-          {/* BOTÓN 3 MUY GRANDE: PRECIOS */}
+          {/* BOTÓN 3: PRECIOS (COUNT DE DB LINKEADO A SUCURSAL) */}
           <button
             type="button"
             className="big-suggestion-card precio"
             onClick={() => setActiveSuggestionModal('precio')}
+            title={`Ver ${precioCount} ajustes de precios para ${store?.name || storeId}`}
           >
             <div className="big-card-top">
               <div className="big-card-icon-wrap emerald">💲</div>
               <div className="big-card-meta">
-                <span className="big-card-badge baja">Competitividad</span>
+                <span className="big-card-badge baja">Precios</span>
                 <h3 className="big-card-title">Ajuste de Precios</h3>
               </div>
             </div>
-            <p className="big-card-desc">
-              Comparativa contra competidores zonales para maximizar volumen y margen.
-            </p>
-            <div className="big-card-chips">
-              <span className="big-card-chip">🍌 Batido ($3.50 → $2.90)</span>
-              <span className="big-card-chip">🍵 Té de jazmín ($2.80)</span>
+
+            <div className="big-card-count-block">
+              <div className="big-card-count-stat">
+                <span className="big-card-count-number">{precioCount}</span>
+                <span className="big-card-count-unit">
+                  {precioCount === 1 ? 'recomendación en DB' : 'recomendaciones en DB'}
+                </span>
+              </div>
             </div>
+
             <div className="big-card-cta">
               <span>Comparar y ajustar precios</span>
               <span className="big-card-arrow">→</span>
@@ -407,11 +499,8 @@ export default function StoreView({
       {activeSuggestionModal && (
         <UnifiedSuggestionModal
           type={activeSuggestionModal}
-          items={
-            recommendations.filter((r) => r.tipo === activeSuggestionModal).length > 0
-              ? recommendations.filter((r) => r.tipo === activeSuggestionModal)
-              : undefined
-          }
+          store={store}
+          items={recommendations.filter((r) => r.tipo === activeSuggestionModal)}
           onClose={() => setActiveSuggestionModal(null)}
           onApplyAction={async (item, actionType) => {
             if (actionType === 'accept') {

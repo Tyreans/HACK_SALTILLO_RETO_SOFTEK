@@ -20,9 +20,23 @@ export default function DashboardMap({
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef(null);
 
-  // Filtrado de tiendas sobresalientes (Placeholders como en Bosquejo.png)
-  const topStores = useMemo(() => stores.filter((s) => s.status === 'top'), [stores]);
-  const lowStores = useMemo(() => stores.filter((s) => s.status === 'low'), [stores]);
+  // Filtrado de tiendas sobresalientes (Máximo 5 unidades en cada lista)
+  const topStores = useMemo(
+    () =>
+      [...stores]
+        .filter((s) => s.status === 'top')
+        .sort((a, b) => (Number(b.variationPct) || 0) - (Number(a.variationPct) || 0))
+        .slice(0, 5),
+    [stores]
+  );
+  const lowStores = useMemo(
+    () =>
+      [...stores]
+        .filter((s) => s.status === 'low')
+        .sort((a, b) => (Number(a.variationPct) || 0) - (Number(b.variationPct) || 0))
+        .slice(0, 5),
+    [stores]
+  );
 
   // Resultados de búsqueda
   const filteredStores = useMemo(() => {
@@ -211,7 +225,7 @@ export default function DashboardMap({
         <img src="/images/LOGO.png" alt="Otzo Logo" className="brand-logo-img" />
         <div className="brand-text-block">
           <div className="brand-title">
-            OTZO <span className="brand-badge-ai">IA</span>
+            ANALIZALO IA!
           </div>
           <div className="brand-subtitle">
             <span className="brand-status-dot" /> Red Activa ({stores.length} Sucursales)
@@ -317,13 +331,12 @@ export default function DashboardMap({
                       </div>
                     </div>
                     <span
-                      className={`panel-store-metric ${
-                        store.status === 'top'
+                      className={`panel-store-metric ${store.status === 'top'
                           ? 'metric-green'
                           : store.status === 'low'
-                          ? 'metric-red'
-                          : ''
-                      }`}
+                            ? 'metric-red'
+                            : ''
+                        }`}
                     >
                       {store.salesFormatted}
                     </span>

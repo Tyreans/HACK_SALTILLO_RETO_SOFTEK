@@ -54,6 +54,50 @@ export async function hayAgenteHoy(tienda, tipo) {
   return rowCount > 0;
 }
 
+// Conteo de recomendaciones en la base de datos por tipo y estado para una sucursal
+export async function conteoPorTienda(tienda) {
+  const { rows } = await query(
+    `SELECT tipo,
+            count(*)::int AS total,
+            count(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes,
+            count(*) FILTER (WHERE estado = 'aceptada')::int AS aceptadas,
+            count(*) FILTER (WHERE estado = 'rechazada')::int AS rechazadas
+       FROM recomendaciones
+      WHERE store_id = $1
+      GROUP BY tipo`,
+    [tienda]
+  );
+
+  const conteos = {
+    reposicion: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+    promocion: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+    precio: { total: 0, pendientes: 0, aceptadas: 0, rechazadas: 0 },
+  };
+
+  let totalGeneral = 0;
+  let totalPendientes = 0;
+
+  for (const r of rows) {
+    if (conteos[r.tipo]) {
+      conteos[r.tipo] = {
+        total: r.total,
+        pendientes: r.pendientes,
+        aceptadas: r.aceptadas,
+        rechazadas: r.rechazadas,
+      };
+      totalGeneral += r.total;
+      totalPendientes += r.pendientes;
+    }
+  }
+
+  return {
+    tienda,
+    conteos,
+    total: totalGeneral,
+    pendientes: totalPendientes,
+  };
+}
+
 // ------------------------------------------------------------------ aprendizaje
 
 // Productos que el agente NO debe volver a sugerir: los que el gerente rechazó hace poco,
