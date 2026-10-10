@@ -53,6 +53,23 @@ export const openapi = {
   paths: {
     "/health": { get: { tags: ["General"], summary: "Estado de la API y la base de datos", responses: okJson("API y base arriba") } },
 
+    "/dashboard/{tienda}/animo": { get: {
+      tags: ["Dashboard"], summary: "Estado de ánimo del avatar de la tienda (feliz o triste)",
+      description: "Puntaje 0–100 = ventas vs. periodo anterior (45 %) + merma (30 %) + productos sin stock o bajos (25 %). " +
+        "feliz si el puntaje es ≥ 50, triste si es menor (una tienda sin operación sale triste con `cerrada: true`). `mensaje` es una frase corta para la cajera (se puede mandar a /voz). " +
+        "También viene dentro de GET /dashboard/{tienda} como `animo`.",
+      parameters: [tienda, { name: "dias", in: "query", schema: { type: "integer", default: 7, minimum: 1, maximum: 90 } }, hasta],
+      responses: okJson("Ánimo", { $ref: "#/components/schemas/Animo" }),
+    } },
+    "/dashboard/animo": { get: {
+      tags: ["Dashboard"], summary: "Ánimo de todas las tiendas, de peor a mejor (para colorear el mapa)",
+      description: "Se guarda 10 minutos en memoria. `meta.por_estado` trae cuántas tiendas hay en cada estado.",
+      parameters: [{ name: "dias", in: "query", schema: { type: "integer", default: 7, minimum: 1, maximum: 90 } }, hasta],
+      responses: okJson("Tiendas", { type: "array", items: { type: "object", properties: {
+        store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" },
+        estado: { $ref: "#/components/schemas/EstadoAnimo" }, puntaje: { type: "integer", nullable: true }, cerrada: { type: "boolean" },
+        principal_problema: { type: "string", nullable: true, enum: ["ventas", "merma", "faltantes", null] } } } }),
+    } },
     "/dashboard/{tienda}": { get: {
       tags: ["Dashboard"],
       summary: "Mejores y peores ventas, estadísticas e inventario de una tienda",
@@ -280,8 +297,20 @@ export const openapi = {
         dias_entrega_proveedor: { type: "integer" }, horas_sin_stock: { type: "number" },
         estado: { type: "string", enum: ["sin_stock", "bajo", "ok"] }, bajo: { type: "boolean" },
       } },
+      EstadoAnimo: { type: "string", enum: ["feliz", "triste"] },
+      Animo: { type: "object", properties: {
+        estado: { $ref: "#/components/schemas/EstadoAnimo" },
+        puntaje: { type: "integer", nullable: true, example: 62 },
+        cerrada: { type: "boolean", description: "La tienda no operó en el periodo (siempre sale triste)" },
+        mensaje: { type: "string", example: "¡Vamos bien! Casi no se tira producto (7.7 % de merma)." },
+        principal_problema: { type: "string", nullable: true, enum: ["ventas", "merma", "faltantes", null] },
+        factores: { type: "array", items: { type: "object", properties: {
+          clave: { type: "string", enum: ["ventas", "merma", "faltantes"] }, peso: { type: "integer" },
+          valor: { type: "number", nullable: true }, puntaje: { type: "integer", nullable: true }, texto: { type: "string" } } } },
+      } },
       Dashboard: { type: "object", properties: {
-        tienda: { type: "object", properties: { store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" } } },
+        tienda: { type: "object", properties: { store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" },
+          cerrada: { type: "boolean", description: "Cerró antes del periodo o no vendió en él" } } },
         periodo: { type: "object", properties: { desde: { type: "string" }, hasta: { type: "string" }, dias: { type: "integer" }, comparado_con: { type: "object" } } },
         mejores_ventas: { $ref: "#/components/schemas/BloqueVentas" },
         peores_ventas: { $ref: "#/components/schemas/BloqueVentas" },
@@ -293,6 +322,7 @@ export const openapi = {
         inventario: { type: "object", properties: {
           fecha: { type: "string" }, total_productos: { type: "integer" }, bajos: { type: "integer" }, productos: lista("ProductoInventario"),
         } },
+        animo: { $ref: "#/components/schemas/Animo" },
       } },
       FilaInventario: { type: "object", properties: {
         fecha: { type: "string" }, tienda: { type: "string" }, sitio: { type: "string" }, sku: { type: "string" }, producto: { type: "string" },
