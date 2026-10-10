@@ -9,9 +9,11 @@ import { asyncHandler, ok } from "../utils/apiResponse.js";
 
 const router = Router();
 
+// Índice: lista todas las rutas registradas
 router.get("/", (req, res) =>
   ok(res, {
     nombre: "API Otzo",
+    documentacion: "/api/docs",
     endpoints: router.stack
       .filter((c) => c.route)
       .map((c) => `${Object.keys(c.route.methods)[0].toUpperCase()} /api${c.route.path}`),
