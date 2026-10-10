@@ -14,9 +14,9 @@ This folder contains REST API endpoint specifications, payloads, response format
 
 ## Catálogo de endpoints (Otzo)
 
-> **Documentación interactiva (Swagger):** con el backend corriendo, abre http://localhost:5000/api/docs para ver y probar cada endpoint. La especificación está en `backend/src/config/swagger.config.js`; al crear un endpoint nuevo, agrégalo ahí también. `GET /api` lista todas las rutas registradas.
+> **Documentación interactiva (Swagger):** con el backend corriendo, abre http://localhost:3002/api/docs para ver y probar cada endpoint. La especificación está en `backend/src/config/swagger.config.js`; al crear un endpoint nuevo, agrégalo ahí también. `GET /api` lista todas las rutas registradas.
 
-Base: `http://localhost:5000/api`. Todas las respuestas son `{ success, data, meta? }`; los errores, `{ success: false, error: { message } }`.
+Base: `http://localhost:3002/api`. Todas las respuestas son `{ success, data, meta? }`; los errores, `{ success: false, error: { message } }`.
 Fechas en `YYYY-MM-DD`, tiendas como `S001`. Los datos van de 2025-10-01 a 2026-09-30.
 
 | Método | Ruta | Parámetros | Devuelve |
