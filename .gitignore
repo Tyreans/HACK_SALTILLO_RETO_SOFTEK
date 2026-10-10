@@ -42,3 +42,4 @@ Thumbs.db
 # Datos del hackathon (no redistribuir; cada quien los copia localmente)
 backend/db/datos/
 backend/db/datos_limpios/
+backend/data/purchase-orders/

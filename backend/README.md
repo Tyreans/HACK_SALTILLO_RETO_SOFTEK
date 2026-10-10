@@ -42,6 +42,23 @@ npm start                     # API en http://localhost:5000/api; chat en http:/
 - En desarrollo, `npm run dev` inicia el mismo servidor con recarga automática. Abre `http://localhost:5000` para usar el chat.
 - El chat consulta Gemini y puede usar herramientas de solo lectura para ventas, inventario, productos y tiendas. No ejecuta SQL generado por el modelo. Ejemplos: “¿Qué productos vendieron más?”, “¿Qué alertas de inventario hay?” o “Resume las ventas por tienda”.
 - Cuando el usuario solicite una lista o cantidad, o la respuesta incluya varios elementos, el asistente los devuelve enumerados, uno por renglón.
+- Añade `BACKBOARD_API_KEY` a `backend/.env` para habilitar memoria persistente por tienda. La clave nunca debe estar en el frontend ni en Git. Aplica la migración sin borrar la base existente con `npm run db:migrar-backboard` (no uses `npm run db:cargar` sobre una base que quieras conservar). La migración rellena `purchase_orders.recommendation_id` para órdenes antiguas cuya recomendación de reposición las identifica inequívocamente mediante `recomendaciones.aplicado_id`.
+- Para comprobar enlaces faltantes o ambiguos después de migrar, ejecuta en PostgreSQL:
+  ```sql
+  SELECT r.id AS recommendation_id, r.aplicado_id, count(po.po_id) AS ordenes_coincidentes
+  FROM recomendaciones r
+  LEFT JOIN purchase_orders po ON po.po_id = r.aplicado_id
+  WHERE r.tipo = 'reposicion' AND r.estado = 'aceptada'
+    AND (po.recommendation_id IS NULL OR po.recommendation_id <> r.id)
+  GROUP BY r.id, r.aplicado_id;
+  ```
+  Las coincidencias no inequívocas no se enlazan automáticamente; revísalas antes de corregirlas manualmente.
+- Para generar las recomendaciones diarias de reposición, ejecuta desde `backend/`:
+  ```bash
+  npm run recomendaciones:reposicion
+  ```
+  Opcionalmente se puede limitar a una tienda: `npm run recomendaciones:reposicion -- --tienda S001`. El comando procesa las tiendas abiertas en secuencia y reintenta exportar las órdenes aceptadas cuyo JSON aún esté pendiente. El cron de Vultr debe invocarlo en la madrugada (por ejemplo, a las 03:00 en la zona horaria del servidor, sujeto a las métricas reales de tráfico); este repositorio no crea ni programa ese cron.
+- Al aceptar una reposición, el backend registra una sola orden por recomendación y escribe un archivo idempotente `backend/data/purchase-orders/<po_id>.json`. Si falla la escritura, la API lo informa y se puede reintentar; el siguiente comando diario también repara exportaciones pendientes. La carpeta generada está excluida de Git.
 - Los CSV no se suben al repo (reglas del hackathon); cada quien los copia en `backend/db/datos/`.
 - Endpoints: ver [`docs/api/README.md`](../docs/api/README.md). Tablas: ver [`docs/database/README.md`](../docs/database/README.md).
 - Requiere Node 18+. `npm run dev` (recarga automática) requiere Node 18.11+.

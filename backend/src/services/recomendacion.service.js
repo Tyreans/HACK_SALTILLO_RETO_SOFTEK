@@ -38,11 +38,27 @@ function reposicion(c, factor = 1) {
   cantidad = Math.max(c.caja, Math.round((cantidad * factor) / c.caja) * c.caja);
 
   const dias = c.existencia / c.venta_diaria;
+  const eventos = Array.isArray(c.eventos_calendario) ? c.eventos_calendario : [];
+  const eventosTexto = eventos.slice(0, 3).map((e) => {
+    if (e.festivo) return `festivo ${e.festivo} (${e.fecha})`;
+    if (e.vacaciones_escolares) return `vacaciones escolares (${e.fecha})`;
+    return `fin de semana (${e.fecha})`;
+  });
+  const calendario = [
+    eventosTexto.length ? `Calendario próximo: ${eventosTexto.join(", ")}.` : "",
+    c.dias_calendario < c.dias_pronosticados
+      ? `Calendario incompleto (${c.dias_calendario}/${c.dias_pronosticados} días); para fechas faltantes se usa el promedio histórico.`
+      : "",
+  ].filter(Boolean).join(" ");
   return {
     tipo: "reposicion", sku: c.sku, producto: c.producto, cantidad,
     prioridad: dias <= c.entrega ? "alta" : dias <= c.entrega + 2 ? "media" : "baja",
     orden: dias,
-    hecho: `Quedan ${c.existencia} piezas (≈${dias.toFixed(1)} días), vende ${c.venta_diaria.toFixed(1)} al día y el proveedor tarda ${c.entrega} días.`,
+    hecho: `Quedan ${c.existencia} piezas (≈${dias.toFixed(1)} días). ` +
+      `La proyección estima ${c.venta_diaria.toFixed(1)} piezas diarias para el horizonte del proveedor ` +
+      `a partir de ${c.dias_historicos} días de historial` +
+      `${c.venta_diaria_historica == null ? "" : ` (promedio histórico: ${Number(c.venta_diaria_historica).toFixed(1)})`}; ` +
+      `la entrega tarda ${c.entrega} días.${calendario ? ` ${calendario}` : ""}`,
   };
 }
 
@@ -128,13 +144,18 @@ async function precioSinCompetencia(tienda) {
 async function redactar(items, tipo, tienda) {
   if (!items.length) return items;
   const base = items.map((i) => ({ ...i, descripcion: i.hecho }));
+  let memoria = "";
   try {
-    const memoria = await Memoria.contexto({ tienda, tipo }).catch(() => "");
+    memoria = await Memoria.contexto({ tienda, tipo });
+  } catch (e) {
+    console.warn(`Backboard no pudo aportar memoria (${tienda}/${tipo}); sigo con los datos actuales:`, e.message);
+  }
+  try {
     const out = await generar({
       json: true,
-      sistema: "Eres analista de una tienda en aeropuerto. Respondes en español, breve y sin inventar datos.",
+      sistema: "Eres analista de una tienda en aeropuerto. Respondes en español, breve y sin inventar datos. Conserva las cifras y eventos de calendario proporcionados.",
       prompt:
-        `Para cada fila escribe el motivo de la sugerencia en máximo 18 palabras, conservando las cifras de "hecho".\n` +
+        `Para cada fila escribe el motivo de la sugerencia en máximo 25 palabras, conservando cifras y eventos de calendario de "hecho".\n` +
         (memoria ? `Lo que ya sabes de este negocio:\n${memoria}\n` : "") +
         `Filas: ${JSON.stringify(items.map((i) => ({ sku: i.sku, producto: i.producto, hecho: i.hecho })))}\n` +
         `Devuelve un arreglo JSON: [{"sku":"...","motivo":"..."}]`,
@@ -153,7 +174,6 @@ async function redactar(items, tipo, tienda) {
 // ------------------------------------------------------------------ generación
 
 async function generarItems(tienda, tipo) {
-  const { hasta } = await Venta.rangoFechas();
   const [excluidos, factores] = await Promise.all([
     Rec.skusExcluidos(tienda, tipo),
     Rec.factoresAprendidos(tienda, tipo),
@@ -161,10 +181,14 @@ async function generarItems(tienda, tipo) {
 
   let items;
   if (tipo === "reposicion") {
+    const hasta = await Candidatos.ultimaFechaInventario(tienda);
+    if (!hasta) throw new ApiError(409, `La tienda ${tienda} no tiene historial de inventario para generar reposición`);
     items = (await Candidatos.reposicion(tienda, hasta)).map((c) => reposicion(c, enRango(factores.get(c.sku) ?? 1, 0.3, 1.5)));
   } else if (tipo === "promocion") {
+    const { hasta } = await Venta.rangoFechas();
     items = (await Candidatos.promocion(tienda, hasta)).map((c) => promocion(c, enRango(factores.get(c.sku) ?? 1, 0.5, 1.5)));
   } else {
+    const { hasta } = await Venta.rangoFechas();
     const filas = await Candidatos.precios(tienda, hasta);
     items = filas.length ? filas.map(precio) : await precioSinCompetencia(tienda);
   }
@@ -185,6 +209,24 @@ export async function obtener({ tienda, tipo, regenerar = false }) {
     await Rec.reemplazarAgente(tienda, tipo, await generarItems(tienda, tipo), { regenerar });
   }
   return Rec.delDia(tienda, tipo);
+}
+
+export async function generarReposicionDiaria({ tienda } = {}) {
+  const ordenesExportadas = await Rec.exportarOrdenesPendientes();
+  const tiendas = tienda ? [{ store_id: tienda }] : await Tienda.paraReposicion();
+  const resultados = [];
+  const errores = [];
+
+  for (const actual of tiendas) {
+    try {
+      const recomendaciones = await obtener({ tienda: actual.store_id, tipo: "reposicion", regenerar: true });
+      resultados.push({ tienda: actual.store_id, recomendaciones: recomendaciones.length });
+    } catch (error) {
+      errores.push({ tienda: actual.store_id, mensaje: error.message });
+      console.error(`No se pudo generar reposición para ${actual.store_id}:`, error.message);
+    }
+  }
+  return { ordenesExportadas, procesadas: resultados, errores };
 }
 
 export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin }) {

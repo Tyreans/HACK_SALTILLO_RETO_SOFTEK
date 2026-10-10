@@ -14,6 +14,7 @@ export const env = {
   clientOrigin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
   databaseUrl: process.env.DATABASE_URL,
   dbSsl: process.env.DB_SSL === "true",
+  backboardApiKey: process.env.BACKBOARD_API_KEY,
   geminiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   elevenKey: process.env.ELEVENLABS_API_KEY,

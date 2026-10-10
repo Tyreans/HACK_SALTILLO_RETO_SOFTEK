@@ -1,45 +1,6 @@
 import { useMemo } from 'react';
 import './RestockPopup.css';
 
-const defaultProducts = [
-  {
-    id: 'cafe',
-    name: 'Café espresso',
-    category: 'Grano · Bolsa 1kg',
-    status: 'Bajo stock',
-    stock: 'Stock actual: 12 unidades | Stock objetivo: 50 uds',
-    date: '14 oct 2026',
-    tone: 'coffee',
-    emoji: '☕',
-    quantity: 38,
-    action: 'idle',
-  },
-  {
-    id: 'aguacate',
-    name: 'Aguacates (KG)',
-    category: 'Materia prima',
-    status: 'Bajo stock',
-    stock: 'Stock actual: 8 kg | Stock objetivo: 25 kg',
-    date: '17 oct 2026',
-    tone: 'avocado',
-    emoji: '🥑',
-    quantity: 17,
-    action: 'idle',
-  },
-  {
-    id: 'platano',
-    name: 'Batido de plátano',
-    category: 'Ingredientes',
-    status: 'Bajo stock',
-    stock: 'Stock actual: 5 kg | Stock objetivo: 15 kg',
-    date: '21 oct 2026',
-    tone: 'banana',
-    emoji: '🍌',
-    quantity: 10,
-    action: 'idle',
-  },
-];
-
 function IconClose() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -82,7 +43,10 @@ function IconPlus() {
 }
 
 export default function RestockPopup({
-  products = defaultProducts,
+  products = [],
+  stores = [],
+  selectedStore = '',
+  onStoreChange,
   onClose,
   onCancel,
   onConfirm,
@@ -90,6 +54,9 @@ export default function RestockPopup({
   onEdit,
   onAccept,
   onReject,
+  isLoading = false,
+  busyId = null,
+  error = '',
   title = 'Reposición de Inventario',
   subtitle = 'Confirmar orden de reposición',
   description = 'Se han identificado productos con stock bajo. Confirma o edita las cantidades a añadir para alcanzar el stock objetivo.',
@@ -113,6 +80,16 @@ export default function RestockPopup({
             <h1>{title}</h1>
             <p>{subtitle}</p>
             <span>{description}</span>
+            <label className="store-picker">
+              Tienda
+              <select value={selectedStore} onChange={(event) => onStoreChange?.(event.target.value)} disabled={!stores.length}>
+                {stores.map((store) => (
+                  <option key={store.store_id} value={store.store_id}>
+                    {store.store_name} ({store.store_id})
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <button className="close-button" type="button" aria-label="Cerrar" onClick={onClose}>
@@ -120,8 +97,16 @@ export default function RestockPopup({
           </button>
         </header>
 
+        {error ? <p className="request-error" role="alert">{error}</p> : null}
+        {isLoading ? <p className="request-message" role="status">Cargando recomendaciones…</p> : null}
+        {!isLoading && !error && !products.length ? (
+          <p className="request-message">No hay recomendaciones para esta tienda.</p>
+        ) : null}
         <div className="product-list">
-          {products.map((product) => (
+          {products.map((product) => {
+            const resolved = product.action === 'accepted' || product.action === 'rejected';
+            const busy = busyId === product.id;
+            return (
             <article key={product.id} className="restock-row">
               <div className={`product-visual ${product.tone}`} aria-hidden="true">
                 <span>{product.emoji}</span>
@@ -149,6 +134,7 @@ export default function RestockPopup({
                 <button
                   type="button"
                   onClick={() => handleQuantity(product.id, -1)}
+                  disabled={resolved || busy}
                   aria-label={`Disminuir ${product.name}`}
                 >
                   <IconMinus />
@@ -157,6 +143,7 @@ export default function RestockPopup({
                 <button
                   type="button"
                   onClick={() => handleQuantity(product.id, 1)}
+                  disabled={resolved || busy}
                   aria-label={`Aumentar ${product.name}`}
                 >
                   <IconPlus />
@@ -164,7 +151,7 @@ export default function RestockPopup({
               </div>
 
               <div className="date-box">
-                <span>Restock programado</span>
+                <span>Recomendación creada</span>
                 <strong>{product.date}</strong>
               </div>
 
@@ -173,27 +160,29 @@ export default function RestockPopup({
                   type="button"
                   className={`secondary-action ${product.action === 'editing' ? 'secondary-action-active' : ''}`}
                   onClick={() => onEdit?.(product.id)}
+                  disabled={resolved || busy}
                 >
                   <IconPencil />
-                  Editar
+                  {busy ? 'Guardando…' : 'Guardar'}
                 </button>
 
-                <button type="button" className="primary-action" onClick={() => onAccept?.(product.id)}>
+                <button type="button" className="primary-action" onClick={() => onAccept?.(product.id)} disabled={resolved || busy}>
                   Aceptar
                 </button>
-                <button type="button" className="ghost-action" onClick={() => onReject?.(product.id)}>
+                <button type="button" className="ghost-action" onClick={() => onReject?.(product.id)} disabled={resolved || busy}>
                   Rechazar
                 </button>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
 
         <footer className="modal-footer">
           <button type="button" className="cancel-button" onClick={onCancel ?? onClose}>
             Cancelar
           </button>
-          <button type="button" className="confirm-button" onClick={() => onConfirm?.(products)}>
+          <button type="button" className="confirm-button" onClick={() => onConfirm?.(products)} disabled={isLoading || !products.some((product) => product.action === 'idle' || product.action === 'editing')}>
             Confirmar reposición
             <span className="total-indicator">{totalToRestock}</span>
           </button>

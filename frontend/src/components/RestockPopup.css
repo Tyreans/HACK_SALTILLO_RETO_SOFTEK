@@ -87,6 +87,36 @@ button {
   max-width: 820px;
 }
 
+.store-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #3b4758;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.store-picker select {
+  min-width: 220px;
+  border: 1px solid #d7dce3;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  padding: 8px 10px;
+}
+
+.request-message,
+.request-error {
+  margin: 18px 24px;
+  color: #697586;
+  font-size: 0.875rem;
+}
+
+.request-error {
+  color: #b42318;
+}
+
 .close-button {
   width: 28px;
   height: 28px;
