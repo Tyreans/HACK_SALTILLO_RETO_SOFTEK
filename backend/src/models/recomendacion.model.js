@@ -3,26 +3,29 @@ import { ApiError } from "../utils/apiError.js";
 
 export const TIPOS = ["reposicion", "promocion", "precio"];
 
-// Qué campo editable corresponde a cada tipo
-const CAMPO_EDITABLE = { reposicion: "cantidad", promocion: "descuento_pct", precio: "precio" };
+// Qué campos puede editar el gerente en cada tipo
+const CAMPOS_EDITABLES = {
+  reposicion: ["cantidad"],
+  promocion: ["descuento_pct", "fecha_inicio", "fecha_fin"],
+  precio: ["precio"],
+};
 
 // Una fila por producto, con el nombre y (si es de precio) lo que cobra la competencia
 const SELECT_FILA = `
   SELECT r.id, r.store_id, r.tipo, r.prioridad, r.sku, p.product_name AS producto,
          r.descripcion, r.origen, r.estado, r.editada,
-         r.cantidad, r.descuento_pct, r.precio_actual, r.precio_propuesto,
-         r.motivo_rechazo, r.propuesta_original, r.creada_en, r.resuelta_en,
-         CASE WHEN c.n IS NULL THEN NULL
-              ELSE json_build_object('promedio', round(c.promedio, 2), 'minimo', c.minimo, 'competidores', c.n)
+         r.cantidad, r.descuento_pct, r.fecha_inicio::text AS fecha_inicio, r.fecha_fin::text AS fecha_fin,
+         r.precio_actual, r.precio_propuesto,
+         r.motivo_rechazo, r.propuesta_original, r.aplicado_id, r.creada_en, r.resuelta_en,
+         CASE WHEN c.store_id IS NULL THEN NULL
+              ELSE json_build_object('promedio', round(c.promedio, 2), 'minimo', c.minimo, 'maximo', c.maximo,
+                                     'competidores', c.competidores, 'alcance', c.alcance,
+                                     'rival_en_promocion', c.rival_en_promocion)
          END AS competencia
     FROM recomendaciones r
     LEFT JOIN products p ON p.sku = r.sku
-    LEFT JOIN LATERAL (
-      SELECT avg(pc.precio) AS promedio, min(pc.precio) AS minimo, count(*)::int AS n
-        FROM precios_competencia pc
-       WHERE r.tipo = 'precio' AND pc.sku = r.sku AND pc.fecha >= CURRENT_DATE - 30
-      HAVING count(*) > 0
-    ) c ON true`;
+    LEFT JOIN v_competencia_tienda c
+           ON r.tipo IN ('precio', 'promocion') AND c.store_id = r.store_id AND c.sku = r.sku`;
 
 const ORDEN = `ORDER BY CASE r.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END, r.id`;
 
@@ -111,11 +114,13 @@ export async function reemplazarAgente(tienda, tipo, items, { regenerar = false 
       await client.query(
         `INSERT INTO recomendaciones
            (store_id, tipo, prioridad, titulo, descripcion, sku, cantidad, descuento_pct,
-            precio_actual, precio_propuesto, origen, propuesta_original)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'agente',$11)`,
+            precio_actual, precio_propuesto, origen, propuesta_original, fecha_inicio, fecha_fin)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'agente',$11,$12,$13)`,
         [tienda, tipo, i.prioridad, i.producto, i.descripcion, i.sku, i.cantidad ?? null,
          i.descuento_pct ?? null, i.precio_actual ?? null, i.precio_propuesto ?? null,
-         JSON.stringify({ cantidad: i.cantidad ?? null, descuento_pct: i.descuento_pct ?? null, precio_propuesto: i.precio_propuesto ?? null })]
+         JSON.stringify({ cantidad: i.cantidad ?? null, descuento_pct: i.descuento_pct ?? null, precio_propuesto: i.precio_propuesto ?? null,
+                          fecha_inicio: i.fecha_inicio ?? null, fecha_fin: i.fecha_fin ?? null }),
+         i.fecha_inicio ?? null, i.fecha_fin ?? null]
       );
     }
     await client.query("COMMIT");
@@ -124,8 +129,9 @@ export async function reemplazarAgente(tienda, tipo, items, { regenerar = false 
 }
 
 // Opción que agrega el gerente a mano
-export async function crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo }) {
-  const valores = { cantidad: cantidad ?? null, descuento_pct: descuento_pct ?? null, precio_propuesto: precio ?? null };
+export async function crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin }) {
+  const valores = { cantidad: cantidad ?? null, descuento_pct: descuento_pct ?? null, precio_propuesto: precio ?? null,
+                    fecha_inicio: fecha_inicio ?? null, fecha_fin: fecha_fin ?? null };
   const dup = await query(
     `SELECT 1 FROM recomendaciones WHERE store_id = $1 AND tipo = $2 AND sku = $3 AND estado = 'pendiente' LIMIT 1`,
     [tienda, tipo, producto.sku]
@@ -134,10 +140,11 @@ export async function crearManual({ tienda, tipo, producto, cantidad, descuento_
   const { rows } = await query(
     `INSERT INTO recomendaciones
        (store_id, tipo, prioridad, titulo, descripcion, sku, cantidad, descuento_pct,
-        precio_actual, precio_propuesto, origen, propuesta_original)
-     VALUES ($1,$2,'media',$3,$4,$5,$6,$7,$8,$9,'gerente',$10) RETURNING id`,
+        precio_actual, precio_propuesto, origen, propuesta_original, fecha_inicio, fecha_fin)
+     VALUES ($1,$2,'media',$3,$4,$5,$6,$7,$8,$9,'gerente',$10,$11,$12) RETURNING id`,
     [tienda, tipo, producto.producto, motivo || "Agregada por el gerente", producto.sku,
-     valores.cantidad, valores.descuento_pct, producto.precio ?? null, valores.precio_propuesto, JSON.stringify(valores)]
+     valores.cantidad, valores.descuento_pct, producto.precio ?? null, valores.precio_propuesto, JSON.stringify(valores),
+     valores.fecha_inicio, valores.fecha_fin]
   );
   return fila({ query }, rows[0].id);
 }
@@ -152,16 +159,26 @@ async function pendiente(client, id) {
 }
 
 // Mezcla los cambios del gerente con los valores actuales; solo se permite el campo de ese tipo
+const comoTexto = (f) => (f == null ? null : f instanceof Date ? f.toISOString().slice(0, 10) : String(f).slice(0, 10));
+
 function aplicar(r, ajustes) {
+  const permitidos = CAMPOS_EDITABLES[r.tipo];
   for (const k of Object.keys(ajustes)) {
-    if (k !== CAMPO_EDITABLE[r.tipo]) throw new ApiError(400, `Una recomendación de ${r.tipo} solo admite "${CAMPO_EDITABLE[r.tipo]}"`);
+    if (!permitidos.includes(k)) throw new ApiError(400, `Una recomendación de ${r.tipo} solo admite: ${permitidos.join(", ")}`);
   }
   const v = {
     cantidad: ajustes.cantidad ?? r.cantidad,
     descuento_pct: ajustes.descuento_pct ?? r.descuento_pct,
     precio_propuesto: ajustes.precio ?? r.precio_propuesto,
+    fecha_inicio: ajustes.fecha_inicio ?? comoTexto(r.fecha_inicio),
+    fecha_fin: ajustes.fecha_fin ?? comoTexto(r.fecha_fin),
   };
-  const cambio = v.cantidad !== r.cantidad || v.descuento_pct !== r.descuento_pct || v.precio_propuesto !== r.precio_propuesto;
+  if (v.fecha_inicio && v.fecha_fin && v.fecha_fin < v.fecha_inicio) {
+    throw new ApiError(400, "fecha_fin no puede ser anterior a fecha_inicio");
+  }
+  const cambio = Number(v.cantidad) !== Number(r.cantidad) || Number(v.descuento_pct) !== Number(r.descuento_pct)
+    || Number(v.precio_propuesto) !== Number(r.precio_propuesto)
+    || v.fecha_inicio !== comoTexto(r.fecha_inicio) || v.fecha_fin !== comoTexto(r.fecha_fin);
   return { v, cambio };
 }
 
@@ -179,8 +196,10 @@ export const editar = (id, ajustes) => transaccion(async (client) => {
   const r = await pendiente(client, id);
   const { v, cambio } = aplicar(r, ajustes);
   await client.query(
-    `UPDATE recomendaciones SET cantidad = $2, descuento_pct = $3, precio_propuesto = $4, editada = editada OR $5 WHERE id = $1`,
-    [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio]
+    `UPDATE recomendaciones SET cantidad = $2, descuento_pct = $3, precio_propuesto = $4, editada = editada OR $5,
+            fecha_inicio = $6, fecha_fin = $7
+      WHERE id = $1`,
+    [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio, v.fecha_inicio, v.fecha_fin]
   );
   return fila(client, id);
 });
@@ -197,10 +216,11 @@ export const rechazar = (id, motivo) => transaccion(async (client) => {
 // Aceptar = decisión del gerente + efecto real:
 //  - reposición → crea una orden de compra en tránsito (purchase_orders)
 //  - precio     → cierra el precio vigente y abre el nuevo (prices)
-//  - promoción  → solo queda registrada (las promociones del dataset son por categoría, no por producto)
+//  - promoción  → crea la promoción en promotions solo para esa tienda y ese producto, con su vigencia
 export const aceptar = (id, ajustes = {}) => transaccion(async (client) => {
   const r = await pendiente(client, id);
   const { v, cambio } = aplicar(r, ajustes);
+  let aplicadoId = null;
 
   if (r.tipo === "reposicion") {
     const { rows } = await client.query(
@@ -209,11 +229,12 @@ export const aceptar = (id, ajustes = {}) => transaccion(async (client) => {
       [r.sku]
     );
     const p = rows[0];
+    aplicadoId = `WEB-PO-${Date.now()}-${id}`;
     await client.query(
       `INSERT INTO purchase_orders
          (po_id, store_id, supplier_id, sku, order_date, expected_date, qty_ordered, unit_cost, status)
        VALUES ($1,$2,$3,$4,CURRENT_DATE,CURRENT_DATE + $5::int,$6,$7,'In transit')`,
-      [`WEB-PO-${Date.now()}-${id}`, r.store_id, p?.supplier_id ?? null, r.sku, p?.entrega ?? 2, v.cantidad, p?.unit_cost ?? null]
+      [aplicadoId, r.store_id, p?.supplier_id ?? null, r.sku, p?.entrega ?? 2, v.cantidad, p?.unit_cost ?? null]
     );
   }
   if (r.tipo === "precio") {
@@ -222,18 +243,37 @@ export const aceptar = (id, ajustes = {}) => transaccion(async (client) => {
         WHERE store_id = $1 AND sku = $2 AND effective_to IS NULL`,
       [r.store_id, r.sku]
     );
+    aplicadoId = `WEB-${Date.now()}-${id}`;
     await client.query(
       `INSERT INTO prices (price_id, store_id, sku, unit_price, currency, effective_from, price_list, last_updated)
        VALUES ($1,$2,$3,$4,'USD',CURRENT_DATE,'otzo-web',CURRENT_DATE)`,
-      [`WEB-${Date.now()}-${id}`, r.store_id, r.sku, v.precio_propuesto]
+      [aplicadoId, r.store_id, r.sku, v.precio_propuesto]
     );
+  }
+  if (r.tipo === "promocion") {
+    if (!v.descuento_pct) throw new ApiError(400, "La promoción no tiene % de descuento");
+    aplicadoId = `PR-WEB-${id}`;
+    // Sin fechas: empieza hoy y dura 7 días
+    await client.query(
+      `INSERT INTO promotions (promo_id, promo_name, promo_type, start_date, end_date, discount_pct,
+                               department, category, region_scope, store_id, sku, origen, recomendacion_id)
+       SELECT $1, left('Promo ' || p.product_name, 80), 'Percent Off',
+              coalesce($2::date, CURRENT_DATE), coalesce($3::date, coalesce($2::date, CURRENT_DATE) + 6), $4,
+              p.department, p.category, 'TIENDA', $5, p.sku, $6, $7
+         FROM products p WHERE p.sku = $8`,
+      [aplicadoId, v.fecha_inicio, v.fecha_fin, v.descuento_pct, r.store_id, r.origen, id, r.sku]
+    );
+    const { rows } = await client.query(`SELECT start_date::text AS i, end_date::text AS f FROM promotions WHERE promo_id = $1`, [aplicadoId]);
+    v.fecha_inicio = rows[0].i;
+    v.fecha_fin = rows[0].f;
   }
   await client.query(
     `UPDATE recomendaciones
         SET estado = 'aceptada', resuelta_en = now(), cantidad = $2, descuento_pct = $3,
-            precio_propuesto = $4, editada = editada OR $5
+            precio_propuesto = $4, editada = editada OR $5,
+            fecha_inicio = $6, fecha_fin = $7, aplicado_id = $8
       WHERE id = $1`,
-    [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio]
+    [id, v.cantidad, v.descuento_pct, v.precio_propuesto, cambio, v.fecha_inicio, v.fecha_fin, aplicadoId]
   );
   return fila(client, id);
 });

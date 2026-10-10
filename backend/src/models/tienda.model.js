@@ -35,3 +35,17 @@ export async function cierres(storeId) {
   );
   return rows;
 }
+
+// Promociones de la tienda: las propias (aceptadas en el panel de IA) y las de cadena que le aplican
+export async function promociones(storeId, { soloVigentes = false } = {}) {
+  const { rows } = await query(
+    `SELECT promo_id, promo_name, promo_type, discount_pct, start_date::text AS inicio, end_date::text AS fin,
+            department, category, sku, producto, origen, recomendacion_id, alcance,
+            (CURRENT_DATE BETWEEN start_date AND end_date) AS vigente
+       FROM v_promociones_tienda
+      WHERE store_id = $1 AND (NOT $2 OR CURRENT_DATE BETWEEN start_date AND end_date)
+      ORDER BY (alcance = 'tienda') DESC, start_date DESC`,
+    [storeId, soloVigentes]
+  );
+  return rows;
+}

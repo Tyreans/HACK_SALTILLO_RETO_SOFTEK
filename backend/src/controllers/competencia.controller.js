@@ -1,6 +1,6 @@
 import * as Competencia from "../models/competencia.model.js";
 import { ok, asyncHandler } from "../utils/apiResponse.js";
-import { fechaOpcional } from "../utils/validar.js";
+import { fechaOpcional, tiendaOpcional } from "../utils/validar.js";
 import { ApiError } from "../utils/apiError.js";
 
 // GET /api/competencia/precios?sku=SKU-100694
@@ -29,4 +29,25 @@ export const cargar = asyncHandler(async (req, res) => {
   });
   const guardados = await Competencia.cargar(filas);
   ok(res, { recibidos: filas.length, guardados, ignorados: filas.length - guardados });
+});
+
+// GET /api/competencia/rivales/S001   (sucursales rivales en el mismo sitio)
+export const rivales = asyncHandler(async (req, res) => {
+  const tienda = tiendaOpcional(req.params.tienda);
+  if (!tienda) throw new ApiError(400, "Falta la tienda");
+  const filas = await Competencia.rivalesDeTienda(tienda);
+  ok(res, filas, { total: filas.length });
+});
+
+// GET /api/competencia/comparar/S001?sku=SKU-100694&q=donut&limite=20
+export const comparar = asyncHandler(async (req, res) => {
+  const tienda = tiendaOpcional(req.params.tienda);
+  if (!tienda) throw new ApiError(400, "Falta la tienda");
+  const limite = Math.min(Math.max(Number(req.query.limite) || 20, 1), 100);
+  const filas = await Competencia.compararTienda({
+    tienda, limite,
+    sku: req.query.sku ? String(req.query.sku).trim().toUpperCase() : null,
+    texto: req.query.q ? String(req.query.q).trim().slice(0, 60) : null,
+  });
+  ok(res, filas, { total: filas.length });
 });

@@ -1,6 +1,7 @@
 import { query } from "../config/db.config.js";
 import * as Producto from "../models/producto.model.js";
 import * as Tienda from "../models/tienda.model.js";
+import * as Competencia from "../models/competencia.model.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_RANGE_DAYS = 7;
@@ -61,6 +62,29 @@ export const databaseTools = [
         categoria: { type: "string" },
         limite: { type: "integer", description: "Cantidad de resultados entre 1 y 30." },
       },
+    },
+  },
+  {
+    name: "comparar_con_rivales",
+    description: "Compara los precios de una tienda contra las tiendas rivales del mismo aeropuerto o estación (base de rivales). Úsalo para preguntas de competencia, precios caros o baratos, o qué hacen los rivales.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        tienda: { type: "string", description: "ID de tienda, obligatorio (p. ej. S001)." },
+        texto: { type: "string", description: "Nombre parcial del producto, opcional." },
+        sku: { type: "string", description: "SKU exacto, opcional." },
+        limite: { type: "integer", description: "Cantidad de productos entre 1 y 20." },
+      },
+      required: ["tienda"],
+    },
+  },
+  {
+    name: "listar_rivales",
+    description: "Lista las sucursales rivales que hay en el mismo sitio que una tienda, con su cadena y posicionamiento (premium, económica, conveniencia).",
+    parametersJsonSchema: {
+      type: "object",
+      properties: { tienda: { type: "string", description: "ID de tienda, obligatorio." } },
+      required: ["tienda"],
     },
   },
   {
@@ -239,6 +263,22 @@ export async function executeDatabaseTool(name, args = {}) {
       return inventory(args);
     case "buscar_productos":
       return searchProducts(args);
+    case "comparar_con_rivales": {
+      const tienda = optionalText(args.tienda, "tienda");
+      if (!tienda) throw new Error("Indica la tienda para comparar con los rivales.");
+      const filas = await Competencia.compararTienda({
+        tienda,
+        sku: optionalText(args.sku, "sku"),
+        texto: optionalText(args.texto, "texto"),
+        limite: resultLimit(args.limite, 10, 20),
+      });
+      return filas.length ? { tienda, filas } : { tienda, mensaje: "No hay datos de rivales para esa tienda o producto.", filas };
+    }
+    case "listar_rivales": {
+      const tienda = optionalText(args.tienda, "tienda");
+      if (!tienda) throw new Error("Indica la tienda.");
+      return { tienda, rivales: await Competencia.rivalesDeTienda(tienda) };
+    }
     case "listar_tiendas":
       return Tienda.listar({ region: optionalText(args.region, "región") });
     default:

@@ -25,3 +25,11 @@ export const kpis = asyncHandler(async (req, res) => {
   const desde = fechaOpcional(req.query.desde, "desde") || r.desde;
   ok(res, await Kpi.porTienda({ tienda: id, desde, hasta }), { desde, hasta });
 });
+
+// GET /api/tiendas/S001/promociones?vigentes=1
+export const promociones = asyncHandler(async (req, res) => {
+  const id = tiendaOpcional(req.params.id);
+  if (!(await Tienda.obtener(id))) throw new ApiError(404, `La tienda ${id} no existe`);
+  const filas = await Tienda.promociones(id, { soloVigentes: req.query.vigentes === "1" });
+  ok(res, filas, { total: filas.length });
+});

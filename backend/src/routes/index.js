@@ -40,6 +40,7 @@ router.use("/chat", chatRoutes);
 router.get("/tiendas", Tiendas.listar);
 router.get("/tiendas/:id", Tiendas.obtener);
 router.get("/tiendas/:id/kpis", Tiendas.kpis);
+router.get("/tiendas/:id/promociones", Tiendas.promociones);
 
 // Productos
 router.get("/productos", Productos.listar);
@@ -67,6 +68,8 @@ router.post("/recomendaciones/:id/rechazar", Recs.rechazar);
 
 // Precios de la competencia (los carga un script; el POST pide x-admin-key)
 router.get("/competencia/precios", Competencia.listar);
+router.get("/competencia/rivales/:tienda", Competencia.rivales);
+router.get("/competencia/comparar/:tienda", Competencia.comparar);
 router.post("/competencia/precios", requiereClaveAdmin, Competencia.cargar);
 
 // Cajera: cada llamada gasta créditos, por eso el límite
