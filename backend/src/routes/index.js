@@ -4,14 +4,27 @@ import * as Tiendas from "../controllers/tienda.controller.js";
 import * as Productos from "../controllers/producto.controller.js";
 import * as Inventario from "../controllers/inventario.controller.js";
 import * as Ventas from "../controllers/venta.controller.js";
+import * as Dashboard from "../controllers/dashboard.controller.js";
 import { asyncHandler, ok } from "../utils/apiResponse.js";
 
 const router = Router();
+
+router.get("/", (req, res) =>
+  ok(res, {
+    nombre: "API Otzo",
+    endpoints: router.stack
+      .filter((c) => c.route)
+      .map((c) => `${Object.keys(c.route.methods)[0].toUpperCase()} /api${c.route.path}`),
+  })
+);
 
 router.get("/health", asyncHandler(async (req, res) => {
   await query("SELECT 1");
   ok(res, { status: "ok", db: "conectada" });
 }));
+
+// Dashboard (panel izquierdo: mejores, peores, estadísticas, inventario)
+router.get("/dashboard/:tienda", Dashboard.resumen);
 
 // Tiendas
 router.get("/tiendas", Tiendas.listar);
