@@ -2,6 +2,7 @@ import * as Dashboard from "../models/dashboard.model.js";
 import * as Tienda from "../models/tienda.model.js";
 import * as Venta from "../models/venta.model.js";
 import { ApiError } from "../utils/apiError.js";
+import { calcularAnimo } from "./animo.service.js";
 
 const sumarDias = (fecha, dias) => {
   const d = new Date(fecha + "T00:00:00Z");
@@ -45,8 +46,12 @@ export async function resumenTienda({ tienda, hasta, dias = 7, limite = 3 }) {
   const b = est.anterior ?? {};
   const bajos = inventario.filter((i) => i.bajo);
 
-  return {
-    tienda: { store_id: t.store_id, nombre: t.store_name, sitio: t.site_name, region: t.region },
+  const resumen = {
+    tienda: {
+      store_id: t.store_id, nombre: t.store_name, sitio: t.site_name, region: t.region,
+      // Cerrada si cerró definitivamente antes del periodo o no registró ventas en él
+      cerrada: Boolean((t.closed_date && t.closed_date <= p.desde) || !(a.venta_total > 0)),
+    },
     periodo: { desde: p.desde, hasta: p.hasta, dias, comparado_con: { desde: p.prevDesde, hasta: p.prevHasta } },
     mejores_ventas: bloqueVentas(mejores),
     peores_ventas: bloqueVentas(peores),
@@ -66,4 +71,37 @@ export async function resumenTienda({ tienda, hasta, dias = 7, limite = 3 }) {
       productos: inventario.slice(0, 5),
     },
   };
+  // Estado de ánimo del avatar (feliz / triste)
+  resumen.animo = calcularAnimo(resumen);
+  return resumen;
+}
+
+// ---------------------------------------------------------------- avatar
+
+export async function animoTienda({ tienda, hasta, dias = 7 }) {
+  const r = await resumenTienda({ tienda, hasta, dias, limite: 1 });
+  return { tienda: r.tienda, periodo: r.periodo, ...r.animo };
+}
+
+// Ánimo de todas las tiendas (para colorear el mapa). Se guarda 10 minutos en memoria
+// porque calcula el dashboard de cada tienda.
+const cacheTodas = new Map();
+export async function animoTodas({ hasta, dias = 7 }) {
+  const clave = `${hasta ?? "ultimo"}|${dias}`;
+  const guardado = cacheTodas.get(clave);
+  if (guardado && Date.now() - guardado.cuando < 10 * 60 * 1000) return guardado.datos;
+
+  const tiendas = await Tienda.listar();
+  const datos = [];
+  for (let i = 0; i < tiendas.length; i += 5) { // de 5 en 5 para no saturar la base
+    const lote = await Promise.all(tiendas.slice(i, i + 5).map(async (t) => {
+      const a = await animoTienda({ tienda: t.store_id, hasta, dias });
+      return { store_id: t.store_id, nombre: t.store_name, sitio: t.site_name, region: t.region,
+        estado: a.estado, puntaje: a.puntaje, cerrada: a.cerrada, principal_problema: a.principal_problema };
+    }));
+    datos.push(...lote);
+  }
+  datos.sort((a, b) => a.puntaje - b.puntaje);
+  cacheTodas.set(clave, { cuando: Date.now(), datos });
+  return datos;
 }

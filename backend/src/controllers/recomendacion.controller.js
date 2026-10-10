@@ -2,7 +2,7 @@ import * as Servicio from "../services/recomendacion.service.js";
 import * as Rec from "../models/recomendacion.model.js";
 import * as Memoria from "../services/memoria.service.js";
 import { ok, asyncHandler } from "../utils/apiResponse.js";
-import { tiendaOpcional } from "../utils/validar.js";
+import { tiendaOpcional, fechaOpcional } from "../utils/validar.js";
 import { ApiError } from "../utils/apiError.js";
 
 const idValido = (v) => {
@@ -33,6 +33,8 @@ function ajustes(body) {
   if (body?.descuento_pct != null) a.descuento_pct = numero(body.descuento_pct, "descuento_pct", 1, 90);
   const p = body?.precio ?? body?.precio_propuesto;
   if (p != null) a.precio = numero(p, "precio", 0.01, 100000);
+  if (body?.fecha_inicio) a.fecha_inicio = fechaOpcional(body.fecha_inicio, "fecha_inicio");
+  if (body?.fecha_fin) a.fecha_fin = fechaOpcional(body.fecha_fin, "fecha_fin");
   return a;
 }
 
@@ -72,10 +74,10 @@ export const crear = asyncHandler(async (req, res) => {
   ok(res, f);
 });
 
-// PATCH /api/recomendaciones/:id   body: { cantidad } | { descuento_pct } | { precio }
+// PATCH /api/recomendaciones/:id   body: { cantidad } | { descuento_pct, fecha_inicio, fecha_fin } | { precio }
 export const editar = asyncHandler(async (req, res) => {
   const a = ajustes(req.body);
-  if (!Object.keys(a).length) throw new ApiError(400, "Indica qué cambiar: cantidad, descuento_pct o precio");
+  if (!Object.keys(a).length) throw new ApiError(400, "Indica qué cambiar: cantidad, descuento_pct, fecha_inicio, fecha_fin o precio");
   const f = await Rec.editar(idValido(req.params.id), a);
   avisarAlAgente("editada", f);
   ok(res, f);

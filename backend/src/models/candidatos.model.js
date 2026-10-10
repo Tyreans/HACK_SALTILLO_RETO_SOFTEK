@@ -55,20 +55,17 @@ export async function promocion(tienda, hasta) {
   return rows;
 }
 
-// Precios: solo productos de la tienda que tienen precio de competencia (últimos 30 días)
+// Precios: productos de la tienda con precio de competencia. Primero los rivales del mismo
+// sitio (base "rivales"); si no hay, el promedio general de precios_competencia.
 export async function precios(tienda, hasta) {
   const { rows } = await query(
     `SELECT p.sku, p.product_name AS producto, pv.unit_price AS precio,
             coalesce(p.unit_cost, 0) AS costo,
-            c.promedio, c.minimo, c.n AS competidores, coalesce(v.unidades, 0) AS unidades
+            c.promedio, c.minimo, c.competidores, c.alcance, c.rival_en_promocion,
+            coalesce(v.unidades, 0) AS unidades
        FROM v_precio_vigente pv
        JOIN products p ON p.sku = pv.sku
-       JOIN LATERAL (
-         SELECT avg(pc.precio) AS promedio, min(pc.precio) AS minimo, count(*)::int AS n
-           FROM precios_competencia pc
-          WHERE pc.sku = pv.sku AND pc.fecha >= CURRENT_DATE - 30
-         HAVING count(*) > 0
-       ) c ON true
+       JOIN v_competencia_tienda c ON c.store_id = pv.store_id AND c.sku = pv.sku
        LEFT JOIN LATERAL (
          SELECT sum(i.units_sold) AS unidades
            FROM inventory_daily i

@@ -9,6 +9,12 @@ import { generar } from "./gemini.service.js";
 import { ApiError } from "../utils/apiError.js";
 
 const MAX_FILAS = 8;
+const hoy = () => new Date().toISOString().slice(0, 10);
+const sumarDias = (f, d) => {
+  const x = new Date(f + "T00:00:00Z");
+  x.setUTCDate(x.getUTCDate() + d);
+  return x.toISOString().slice(0, 10);
+};
 const r2 = (n) => Math.round(n * 100) / 100;
 const enRango = (n, min, max) => Math.min(Math.max(n, min), max);
 
@@ -64,22 +70,29 @@ function promocion(c, factor = 1) {
   descuento = Math.min(Math.max(descuento, 5), techo);
   if (techo < 5) return null;
 
+  // Vigencia: los perecederos rotan rápido (3 días); el resto, una semana
+  const fecha_inicio = hoy();
+  const fecha_fin = sumarDias(fecha_inicio, c.perecedero ? 2 : 6);
   return {
     tipo: "promocion", sku: c.sku, producto: c.producto, descuento_pct: descuento,
-    precio_actual: c.precio, prioridad, orden: -descuento, hecho,
+    precio_actual: c.precio, prioridad, orden: -descuento, hecho, fecha_inicio, fecha_fin,
   };
 }
 
 // Precio: acercarse al promedio de la competencia; subir si estamos muy abajo y el producto se vende
 function precio(c) {
   const brecha = (c.precio - c.promedio) / c.promedio;
+  const donde = c.alcance !== "sitio" ? "la competencia"
+    : c.competidores === 1 ? "el rival de este sitio" : `los ${c.competidores} rivales de este sitio`;
+  const nota = c.rival_en_promocion ? " Ojo: un rival tiene oferta temporal." : "";
   let propuesto, hecho;
   if (brecha > 0.05) {
     propuesto = r2(Math.max(c.promedio, c.costo * 1.15));
-    hecho = `Cuesta ${Math.round(brecha * 100)} % más que el promedio de la competencia ($${r2(c.promedio)}).`;
+    const contra = c.alcance === "sitio" && c.competidores === 1 ? donde : `el promedio de ${donde}`;
+    hecho = `Cuesta ${Math.round(brecha * 100)} % más que ${contra} ($${r2(c.promedio)}).${nota}`;
   } else if (brecha < -0.1 && c.unidades > 0) {
     propuesto = r2(c.promedio * 0.97);
-    hecho = `Cuesta ${Math.round(-brecha * 100)} % menos que la competencia ($${r2(c.promedio)}) y se vende: hay margen para subir.`;
+    hecho = `Cuesta ${Math.round(-brecha * 100)} % menos que ${donde} ($${r2(c.promedio)}) y se vende: hay margen para subir.${nota}`;
   } else return null;
   if (propuesto === c.precio) return null;
   const abs = Math.abs(brecha);
@@ -174,7 +187,7 @@ export async function obtener({ tienda, tipo, regenerar = false }) {
   return Rec.delDia(tienda, tipo);
 }
 
-export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, precio, motivo }) {
+export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin }) {
   if (!(await Tienda.obtener(tienda))) throw new ApiError(404, `La tienda ${tienda} no existe`);
   const producto = await Candidatos.producto(tienda, sku);
   if (!producto) throw new ApiError(404, `El producto ${sku} no existe`);
@@ -183,10 +196,15 @@ export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, 
   if (tipo === "promocion" && descuento_pct == null) throw new ApiError(400, "Falta 'descuento_pct'");
   if (tipo === "precio" && precio == null) throw new ApiError(400, "Falta 'precio'");
   if (tipo === "precio" && producto.precio == null) throw new ApiError(400, "Ese producto no tiene precio vigente en la tienda");
-  const campo = { reposicion: "cantidad", promocion: "descuento_pct", precio: "precio" }[tipo];
-  const dado = { cantidad, descuento_pct, precio };
+  const campos = { reposicion: ["cantidad"], promocion: ["descuento_pct", "fecha_inicio", "fecha_fin"], precio: ["precio"] }[tipo];
+  const dado = { cantidad, descuento_pct, precio, fecha_inicio, fecha_fin };
   for (const k of Object.keys(dado)) {
-    if (k !== campo && dado[k] != null) throw new ApiError(400, `Una recomendación de ${tipo} solo admite "${campo}"`);
+    if (!campos.includes(k) && dado[k] != null) throw new ApiError(400, `Una recomendación de ${tipo} solo admite: ${campos.join(", ")}`);
   }
-  return Rec.crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo });
+  if (tipo === "promocion") {
+    fecha_inicio ??= hoy();
+    fecha_fin ??= sumarDias(fecha_inicio, 6);
+    if (fecha_fin < fecha_inicio) throw new ApiError(400, "fecha_fin no puede ser anterior a fecha_inicio");
+  }
+  return Rec.crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin });
 }

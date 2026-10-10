@@ -9,10 +9,12 @@ const desde = { name: "desde", in: "query", schema: { type: "string", format: "d
 const hasta = { name: "hasta", in: "query", schema: { type: "string", format: "date", example: "2026-09-30" } };
 const idRec = { name: "id", in: "path", required: true, schema: { type: "integer", example: 1 }, description: "id de la recomendación" };
 const tipoRec = { type: "string", enum: ["reposicion", "promocion", "precio"] };
-// Cada tipo solo admite su campo: reposicion → cantidad · promocion → descuento_pct · precio → precio
+// Campos por tipo: reposicion → cantidad · promocion → descuento_pct, fecha_inicio, fecha_fin · precio → precio
 const ajustes = { type: "object", properties: {
   cantidad: { type: "integer", minimum: 1, example: 24, description: "Solo en reposicion" },
   descuento_pct: { type: "number", minimum: 1, maximum: 90, example: 20, description: "Solo en promocion" },
+  fecha_inicio: { type: "string", format: "date", example: "2026-10-12", description: "Solo en promocion" },
+  fecha_fin: { type: "string", format: "date", example: "2026-10-19", description: "Solo en promocion" },
   precio: { type: "number", minimum: 0.01, example: 2.75, description: "Solo en precio" },
 } };
 const limite = (def, max) => ({ name: "limite", in: "query", schema: { type: "integer", default: def, minimum: 1, maximum: max } });
@@ -51,6 +53,23 @@ export const openapi = {
   paths: {
     "/health": { get: { tags: ["General"], summary: "Estado de la API y la base de datos", responses: okJson("API y base arriba") } },
 
+    "/dashboard/{tienda}/animo": { get: {
+      tags: ["Dashboard"], summary: "Estado de ánimo del avatar de la tienda (feliz o triste)",
+      description: "Puntaje 0–100 = ventas vs. periodo anterior (45 %) + merma (30 %) + productos sin stock o bajos (25 %). " +
+        "feliz si el puntaje es ≥ 50, triste si es menor (una tienda sin operación sale triste con `cerrada: true`). `mensaje` es una frase corta para la cajera (se puede mandar a /voz). " +
+        "También viene dentro de GET /dashboard/{tienda} como `animo`.",
+      parameters: [tienda, { name: "dias", in: "query", schema: { type: "integer", default: 7, minimum: 1, maximum: 90 } }, hasta],
+      responses: okJson("Ánimo", { $ref: "#/components/schemas/Animo" }),
+    } },
+    "/dashboard/animo": { get: {
+      tags: ["Dashboard"], summary: "Ánimo de todas las tiendas, de peor a mejor (para colorear el mapa)",
+      description: "Se guarda 10 minutos en memoria. `meta.por_estado` trae cuántas tiendas hay en cada estado.",
+      parameters: [{ name: "dias", in: "query", schema: { type: "integer", default: 7, minimum: 1, maximum: 90 } }, hasta],
+      responses: okJson("Tiendas", { type: "array", items: { type: "object", properties: {
+        store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" },
+        estado: { $ref: "#/components/schemas/EstadoAnimo" }, puntaje: { type: "integer", nullable: true }, cerrada: { type: "boolean" },
+        principal_problema: { type: "string", nullable: true, enum: ["ventas", "merma", "faltantes", null] } } } }),
+    } },
     "/dashboard/{tienda}": { get: {
       tags: ["Dashboard"],
       summary: "Mejores y peores ventas, estadísticas e inventario de una tienda",
@@ -77,11 +96,13 @@ export const openapi = {
         schema: { type: "object", required: ["tienda", "tipo", "sku"], properties: {
           tienda: { type: "string", example: "S001" }, tipo: tipoRec, sku: { type: "string", example: "SKU-100694" },
           cantidad: { type: "integer" }, descuento_pct: { type: "number" }, precio: { type: "number" },
+          fecha_inicio: { type: "string", format: "date", description: "Promoción; por defecto hoy" },
+          fecha_fin: { type: "string", format: "date", description: "Promoción; por defecto inicio + 6 días" },
           motivo: { type: "string", example: "Viene puente y se vende más" },
         } },
         examples: {
           reposicion: { value: { tienda: "S001", tipo: "reposicion", sku: "SKU-100694", cantidad: 24 } },
-          promocion: { value: { tienda: "S001", tipo: "promocion", sku: "SKU-100694", descuento_pct: 20 } },
+          promocion: { value: { tienda: "S001", tipo: "promocion", sku: "SKU-100694", descuento_pct: 20, fecha_inicio: "2026-10-12", fecha_fin: "2026-10-19" } },
           precio: { value: { tienda: "S001", tipo: "precio", sku: "SKU-100694", precio: 21.5 } },
         } } } },
       responses: { 201: { description: "Creada como pendiente" }, 400: { $ref: "#/components/responses/Error" },
@@ -100,7 +121,8 @@ export const openapi = {
     "/recomendaciones/{id}/aceptar": { post: {
       tags: ["Recomendaciones"], summary: "Aceptar (botón Aceptar)",
       description: "reposicion → crea un pedido en `purchase_orders` (In transit) · precio → cierra el precio vigente y abre el nuevo en `prices` · " +
-        "promocion → queda registrada como aceptada. Acepta los mismos campos que Editar para editar y aceptar en una sola llamada.",
+        "promocion → crea la promoción en `promotions` solo para esa tienda y producto, con su % y vigencia (se ve en GET /tiendas/{tienda}/promociones). " +
+        "`aplicado_id` dice qué registro se creó. Acepta los mismos campos que Editar para editar y aceptar en una sola llamada.",
       parameters: [idRec], requestBody: { content: { "application/json": { schema: ajustes } } },
       responses: { ...okJson("Fila aceptada", { $ref: "#/components/schemas/Recomendacion" }), 409: { $ref: "#/components/responses/Error" } },
     } },
@@ -112,6 +134,32 @@ export const openapi = {
       responses: { ...okJson("Fila rechazada", { $ref: "#/components/schemas/Recomendacion" }), 409: { $ref: "#/components/responses/Error" } },
     } },
 
+    "/tiendas/{tienda}/promociones": { get: {
+      tags: ["Tiendas"], summary: "Promociones de la tienda: las aceptadas en el panel de IA y las de cadena que le aplican",
+      parameters: [tienda, { name: "vigentes", in: "query", schema: { type: "string", enum: ["1"] }, description: "Solo las vigentes hoy" }],
+      responses: okJson("Promociones", { type: "array", items: { type: "object", properties: {
+        promo_id: { type: "string" }, promo_name: { type: "string" }, discount_pct: { type: "number" }, inicio: { type: "string" }, fin: { type: "string" },
+        sku: { type: "string", nullable: true }, producto: { type: "string", nullable: true }, category: { type: "string", nullable: true },
+        alcance: { type: "string", enum: ["tienda", "cadena"] }, origen: { type: "string" }, recomendacion_id: { type: "integer", nullable: true },
+        vigente: { type: "boolean" } } } }),
+    } },
+    "/competencia/rivales/{tienda}": { get: {
+      tags: ["Competencia"], summary: "Sucursales rivales en el mismo sitio que la tienda (base rivales)",
+      parameters: [tienda],
+      responses: okJson("Rivales", { type: "array", items: { type: "object", properties: {
+        tienda_id: { type: "string" }, nombre: { type: "string" }, ubicacion: { type: "string" }, cadena: { type: "string" },
+        posicionamiento: { type: "string", enum: ["premium", "economica", "conveniencia"] }, productos: { type: "integer" }, ultimo_precio: { type: "string" } } } }),
+    } },
+    "/competencia/comparar/{tienda}": { get: {
+      tags: ["Competencia"], summary: "Nuestro precio vs. cada rival del mismo sitio, por producto",
+      description: "Ordenado por la diferencia más grande. Se compara contra el precio normal; `precio_promo` de cada rival indica si está en oferta.",
+      parameters: [tienda, { name: "sku", in: "query", schema: { type: "string" } }, { name: "q", in: "query", schema: { type: "string", example: "donut" } }, limite(20, 100)],
+      responses: okJson("Comparación", { type: "array", items: { type: "object", properties: {
+        sku: { type: "string" }, producto: { type: "string" }, nuestro_precio: { type: "number" }, promedio_rivales: { type: "number" },
+        minimo_rivales: { type: "number" }, diferencia_pct: { type: "number" }, rival_en_promocion: { type: "boolean" },
+        rivales: { type: "array", items: { type: "object", properties: { cadena: { type: "string" }, posicionamiento: { type: "string" },
+          precio: { type: "number" }, precio_promo: { type: "number", nullable: true }, fecha: { type: "string" } } } } } } }),
+    } },
     "/competencia/precios": {
       get: {
         tags: ["Competencia"], summary: "Último precio de cada competidor",
@@ -133,11 +181,22 @@ export const openapi = {
     },
 
     "/chat": { post: {
-      tags: ["Asistente"], summary: "Pregunta a la cajera (Gemini, con datos de la tienda)",
-      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["tienda", "mensaje"], properties: {
-        tienda: { type: "string", example: "S001" }, mensaje: { type: "string", maxLength: 300, example: "¿Qué se vendió mejor esta semana?" } } } } } },
-      responses: { ...okJson("{ respuesta }", { type: "object", properties: { respuesta: { type: "string" } } }),
-        429: { $ref: "#/components/responses/Error" }, 503: { $ref: "#/components/responses/Error" } },
+      tags: ["Asistente"], summary: "Chatbot con acceso a la base (Gemini con herramientas)",
+      description: "Gemini consulta ventas, inventario, productos, tiendas y **rivales** (comparar_con_rivales, listar_rivales). " +
+        "Manda el `sessionId` que regresa para conservar la conversación. Máximo 30 mensajes por minuto.",
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["message"], properties: {
+        message: { type: "string", maxLength: 4000, example: "¿Qué productos de la tienda S001 están más caros que los rivales?" },
+        sessionId: { type: "string", description: "Opcional; el que regresó la respuesta anterior" } } } } } },
+      responses: {
+        200: { description: "Respuesta", content: { "application/json": { schema: { type: "object", properties: {
+          response: { type: "string" }, sessionId: { type: "string" } } } } } },
+        400: { description: "Mensaje vacío o muy largo" }, 429: { description: "Demasiadas solicitudes" },
+      },
+    } },
+    "/chat/reset": { post: {
+      tags: ["Asistente"], summary: "Borra la conversación",
+      requestBody: { content: { "application/json": { schema: { type: "object", properties: { sessionId: { type: "string" } } } } } },
+      responses: { 200: { description: "{ success: true }" } },
     } },
     "/voz": { post: {
       tags: ["Asistente"], summary: "Texto a voz (ElevenLabs). Devuelve audio mp3",
@@ -238,8 +297,20 @@ export const openapi = {
         dias_entrega_proveedor: { type: "integer" }, horas_sin_stock: { type: "number" },
         estado: { type: "string", enum: ["sin_stock", "bajo", "ok"] }, bajo: { type: "boolean" },
       } },
+      EstadoAnimo: { type: "string", enum: ["feliz", "triste"] },
+      Animo: { type: "object", properties: {
+        estado: { $ref: "#/components/schemas/EstadoAnimo" },
+        puntaje: { type: "integer", nullable: true, example: 62 },
+        cerrada: { type: "boolean", description: "La tienda no operó en el periodo (siempre sale triste)" },
+        mensaje: { type: "string", example: "¡Vamos bien! Casi no se tira producto (7.7 % de merma)." },
+        principal_problema: { type: "string", nullable: true, enum: ["ventas", "merma", "faltantes", null] },
+        factores: { type: "array", items: { type: "object", properties: {
+          clave: { type: "string", enum: ["ventas", "merma", "faltantes"] }, peso: { type: "integer" },
+          valor: { type: "number", nullable: true }, puntaje: { type: "integer", nullable: true }, texto: { type: "string" } } } },
+      } },
       Dashboard: { type: "object", properties: {
-        tienda: { type: "object", properties: { store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" } } },
+        tienda: { type: "object", properties: { store_id: { type: "string" }, nombre: { type: "string" }, sitio: { type: "string" }, region: { type: "string" },
+          cerrada: { type: "boolean", description: "Cerró antes del periodo o no vendió en él" } } },
         periodo: { type: "object", properties: { desde: { type: "string" }, hasta: { type: "string" }, dias: { type: "integer" }, comparado_con: { type: "object" } } },
         mejores_ventas: { $ref: "#/components/schemas/BloqueVentas" },
         peores_ventas: { $ref: "#/components/schemas/BloqueVentas" },
@@ -251,6 +322,7 @@ export const openapi = {
         inventario: { type: "object", properties: {
           fecha: { type: "string" }, total_productos: { type: "integer" }, bajos: { type: "integer" }, productos: lista("ProductoInventario"),
         } },
+        animo: { $ref: "#/components/schemas/Animo" },
       } },
       FilaInventario: { type: "object", properties: {
         fecha: { type: "string" }, tienda: { type: "string" }, sitio: { type: "string" }, sku: { type: "string" }, producto: { type: "string" },
@@ -265,10 +337,14 @@ export const openapi = {
         origen: { type: "string", enum: ["agente", "gerente"] }, estado: { type: "string", enum: ["pendiente", "aceptada", "rechazada"] },
         editada: { type: "boolean" },
         cantidad: { type: "integer", nullable: true }, descuento_pct: { type: "number", nullable: true },
+        fecha_inicio: { type: "string", nullable: true, description: "Solo promocion" }, fecha_fin: { type: "string", nullable: true, description: "Solo promocion" },
         precio_actual: { type: "number", nullable: true }, precio_propuesto: { type: "number", nullable: true },
         motivo_rechazo: { type: "string", nullable: true }, propuesta_original: { type: "object", nullable: true },
-        competencia: { type: "object", nullable: true, description: "Solo en precio: promedio, minimo y número de competidores (30 días)",
-          properties: { promedio: { type: "number" }, minimo: { type: "number" }, competidores: { type: "integer" } } },
+        aplicado_id: { type: "string", nullable: true, description: "Registro creado al aceptar: PR-WEB-… (promoción), WEB-PO-… (pedido) o WEB-… (precio)" },
+        competencia: { type: "object", nullable: true,
+          description: "En precio y promoción. alcance 'sitio' = rivales del mismo aeropuerto/estación (base rivales); 'general' = precios_competencia",
+          properties: { promedio: { type: "number" }, minimo: { type: "number" }, maximo: { type: "number" }, competidores: { type: "integer" },
+            alcance: { type: "string", enum: ["sitio", "general"] }, rival_en_promocion: { type: "boolean" } } },
         creada_en: { type: "string" }, resuelta_en: { type: "string", nullable: true },
       } },
       Tienda: { type: "object", properties: {
