@@ -195,17 +195,25 @@ export default function UnifiedSuggestionModal({
     );
   };
 
-  const handleAcceptItem = (item) => {
-    setItems((prev) => prev.filter((it) => it.id !== item.id));
+  const handleAcceptItem = async (item) => {
     if (onApplyAction) {
-      onApplyAction(item, 'accept');
+      const ok = await onApplyAction(item, 'accept');
+      if (ok) {
+        setItems((prev) => prev.filter((it) => it.id !== item.id));
+      }
+    } else {
+      setItems((prev) => prev.filter((it) => it.id !== item.id));
     }
   };
 
-  const handleRejectItem = (item) => {
-    setItems((prev) => prev.filter((it) => it.id !== item.id));
+  const handleRejectItem = async (item) => {
     if (onApplyAction) {
-      onApplyAction(item, 'reject');
+      const ok = await onApplyAction(item, 'reject');
+      if (ok) {
+        setItems((prev) => prev.filter((it) => it.id !== item.id));
+      }
+    } else {
+      setItems((prev) => prev.filter((it) => it.id !== item.id));
     }
   };
 
