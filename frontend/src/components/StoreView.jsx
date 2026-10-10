@@ -71,23 +71,41 @@ export default function StoreView({
     }
   }, [activeSuggestionModal, storeId]);
 
-  // Aceptar / Rechazar recomendación
+  // Aceptar / Rechazar recomendación con verificación de respuesta
   const handleAcceptRec = async (recId, recTitle, payload = {}) => {
-    await acceptRecommendationApi(recId, payload);
-    setRecommendations((prev) => prev.filter((r) => r.id !== recId));
-    onShowAlert?.({
-      type: 'success',
-      message: `Recomendación aceptada: "${recTitle}". Enviada a ejecución.`,
-    });
+    const res = await acceptRecommendationApi(recId, payload);
+    if (res.ok) {
+      setRecommendations((prev) => prev.filter((r) => r.id !== recId));
+      onShowAlert?.({
+        type: 'success',
+        message: `Recomendación aceptada: "${recTitle}". Enviada a ejecución.`,
+      });
+      return true;
+    } else {
+      onShowAlert?.({
+        type: 'error',
+        message: `No se pudo aceptar: ${res.error || 'Error en el servidor'}`,
+      });
+      return false;
+    }
   };
 
   const handleRejectRec = async (recId, recTitle, motivo = '') => {
-    await rejectRecommendationApi(recId, motivo || 'Rechazado por gerente de sucursal');
-    setRecommendations((prev) => prev.filter((r) => r.id !== recId));
-    onShowAlert?.({
-      type: 'info',
-      message: `Recomendación descartada: "${recTitle}". Guardado en IA.`,
-    });
+    const res = await rejectRecommendationApi(recId, motivo || 'Rechazado por gerente de sucursal');
+    if (res.ok) {
+      setRecommendations((prev) => prev.filter((r) => r.id !== recId));
+      onShowAlert?.({
+        type: 'info',
+        message: `Recomendación descartada: "${recTitle}". Guardado en memoria IA.`,
+      });
+      return true;
+    } else {
+      onShowAlert?.({
+        type: 'error',
+        message: `No se pudo descartar: ${res.error || 'Error en el servidor'}`,
+      });
+      return false;
+    }
   };
 
   const mejores = dashboardData?.mejores_ventas || fallbackStoreDetails.S001.mejores_ventas;

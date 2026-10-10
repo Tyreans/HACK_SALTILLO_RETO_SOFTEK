@@ -10,6 +10,7 @@ export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToS
         : '¡Hola! Soy Otzo, tu Asistente de Operaciones con IA. Pregúntame sobre ventas, inventario, mermas o recomendaciones de la red de sucursales.',
     },
   ]);
+  const [sessionId, setSessionId] = useState(null);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
@@ -27,26 +28,33 @@ export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToS
     setInputMessage('');
     setIsLoading(true);
 
+    // Preparar mensaje con contexto de sucursal si está seleccionada
+    const contextualQuery = store && !textToSend.toLowerCase().includes(store.id.toLowerCase())
+      ? `[Contexto de sucursal ${store.name} (${store.id})]: ${textToSend}`
+      : textToSend;
+
     try {
-      // Intentar llamar al backend Express
+      // Llamar al backend Express (/api/chat con sessionId multi-turno)
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: textToSend,
-          tienda: store?.id || 'S001',
+          message: contextualQuery,
+          sessionId: sessionId || undefined,
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const replyText = data.response || data.data?.respuesta || 'Análisis completado con éxito.';
-        setMessages((prev) => [...prev, { role: 'assistant', text: replyText }]);
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.response) {
+        if (data.sessionId) setSessionId(data.sessionId);
+        setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
       } else {
-        throw new Error('Respuesta del servidor no disponible');
+        const errorMsg = data.error || data.message || (res.status === 429 ? 'Límite de solicitudes de IA alcanzado. Espera un momento.' : 'No se pudo obtener respuesta del asistente.');
+        setMessages((prev) => [...prev, { role: 'assistant', text: `⚠️ ${errorMsg}` }]);
       }
     } catch {
-      // Fallback inteligente para demo de hackathon
+      // Fallback inteligente en caso de desconexión total del servidor
       setTimeout(() => {
         let fallbackReply = '';
         const q = textToSend.toLowerCase();
@@ -62,9 +70,7 @@ export default function ChatDrawer({ initialQuery, store, onClose, onNavigateToS
         }
 
         setMessages((prev) => [...prev, { role: 'assistant', text: fallbackReply }]);
-        setIsLoading(false);
       }, 700);
-      return;
     } finally {
       setIsLoading(false);
     }
