@@ -41,6 +41,7 @@ npm start                     # API en http://localhost:5000/api; chat en http:/
 
 - En desarrollo, `npm run dev` inicia el mismo servidor con recarga automática. Abre `http://localhost:5000` para usar el chat.
 - El chat consulta Gemini y puede usar herramientas de solo lectura para ventas, inventario, productos y tiendas. No ejecuta SQL generado por el modelo. Ejemplos: “¿Qué productos vendieron más?”, “¿Qué alertas de inventario hay?” o “Resume las ventas por tienda”.
+- Cuando el usuario solicite una lista o cantidad, o la respuesta incluya varios elementos, el asistente los devuelve enumerados, uno por renglón.
 - Los CSV no se suben al repo (reglas del hackathon); cada quien los copia en `backend/db/datos/`.
 - Endpoints: ver [`docs/api/README.md`](../docs/api/README.md). Tablas: ver [`docs/database/README.md`](../docs/database/README.md).
 - Requiere Node 18+. `npm run dev` (recarga automática) requiere Node 18.11+.
