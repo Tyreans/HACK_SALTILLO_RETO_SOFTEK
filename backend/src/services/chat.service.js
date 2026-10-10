@@ -16,8 +16,7 @@ const CHAT_CONFIG = {
   systemInstruction: `Eres el asistente de una tienda. Responde en español, con claridad y brevedad.
 Usa las herramientas de datos para responder preguntas sobre ventas, inventario, productos o tiendas; no inventes cifras ni escribas SQL.
 Las herramientas solo consultan datos. Si una pregunta requiere fechas relativas, consulta primero el rango disponible y cuenta desde la última fecha cargada, no desde la fecha actual.
-Si faltan datos o no hay resultados, dilo claramente. Resume los resultados sin afirmar más de lo que muestran.
-Cuando la respuesta incluya dos o más elementos distintos, preséntalos siempre como una lista numerada, un elemento por línea, empezando en "1."; hazlo aunque el usuario no pida una lista. Si pide una cantidad concreta, enumera como máximo esa cantidad y respeta el orden solicitado. Para un solo elemento, responde en prosa sin numerarlo.`,
+Si faltan datos o no hay resultados, dilo claramente. Resume los resultados sin afirmar más de lo que muestran.`,
   tools: [{ functionDeclarations: databaseTools }],
 };
 
@@ -48,7 +47,7 @@ function createChat(modelIndex, history = []) {
   return ai.chats.create({ model: MODELS[modelIndex], history, config: CHAT_CONFIG });
 }
 
-async function sendWithTools(session, message, trace) {
+async function sendWithTools(session, message) {
   let response = await session.chat.sendMessage({ message });
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -58,16 +57,7 @@ async function sendWithTools(session, message, trace) {
     const functionResponses = await Promise.all(
       functionCalls.map(async ({ name, args, id }) => {
         if (!name) throw new Error('Gemini devolvió una llamada de herramienta sin nombre.');
-        const toolTrace = trace ? { round: round + 1, name, args: args ?? {} } : null;
-        if (toolTrace) trace.toolCalls.push(toolTrace);
-        let result;
-        try {
-          result = await executeDatabaseTool(name, args ?? {});
-        } catch (error) {
-          if (toolTrace) toolTrace.error = { message: error.message };
-          throw error;
-        }
-        if (toolTrace) toolTrace.result = result;
+        const result = await executeDatabaseTool(name, args ?? {});
         return {
           functionResponse: {
             name,
@@ -86,7 +76,7 @@ async function sendWithTools(session, message, trace) {
   return response;
 }
 
-export async function sendWithFailover(session, message, trace) {
+export async function sendWithFailover(session, message) {
   let lastError;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -99,10 +89,8 @@ export async function sendWithFailover(session, message, trace) {
         session.modelIndex = idx;
       }
 
-      if (trace) trace.models.push({ round: round + 1, model: MODELS[idx] });
-
       try {
-        return await sendWithTools(session, message, trace);
+        return await sendWithTools(session, message);
       } catch (err) {
         lastError = err;
         console.warn(
