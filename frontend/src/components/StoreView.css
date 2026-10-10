@@ -162,7 +162,8 @@
   flex: 1;
   position: relative;
   display: grid;
-  grid-template-columns: 320px 1fr 440px; /* Ancho ampliado para evitar carrusel */
+  grid-template-columns: 320px 1fr 440px;
+  /* Ancho ampliado para evitar carrusel */
   grid-template-rows: 1fr;
   align-items: center;
   padding: 1.5rem 2rem 2.5rem;
@@ -430,11 +431,11 @@
   /* Posición horizontal: derecha (+) o izquierda (-) */
   --stage-vertical-offset: -70px;
   /* SUBIR AMBOS para centrarlos en la pantalla (-50px, -80px, -120px) */
-  --speech-top: -35px;
-  /* Altura del globo de texto flotante */
-  --speech-left: 50%;
-  /* Posición horizontal base del globo */
-  --speech-tail-right: 32px;
+  --speech-top: 200px;
+  /* Altura del globo de texto flotante (más arriba para despejar la cabeza del avatar) */
+  --speech-left: 35%;
+  /* Posición horizontal base del globo (desplazado a la izquierda) */
+  --speech-tail-right: 55px;
   /* Posición de la cola en la esquina inferior derecha */
 
   position: relative;
