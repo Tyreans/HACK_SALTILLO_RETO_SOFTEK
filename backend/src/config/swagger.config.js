@@ -7,6 +7,14 @@ const tiendaQ = { name: "tienda", in: "query", schema: { type: "string", example
 const fecha = { name: "fecha", in: "query", schema: { type: "string", format: "date", example: "2026-09-30" }, description: "Sin valor = último día con datos" };
 const desde = { name: "desde", in: "query", schema: { type: "string", format: "date", example: "2026-09-01" } };
 const hasta = { name: "hasta", in: "query", schema: { type: "string", format: "date", example: "2026-09-30" } };
+const idRec = { name: "id", in: "path", required: true, schema: { type: "integer", example: 1 }, description: "id de la recomendación" };
+const tipoRec = { type: "string", enum: ["reposicion", "promocion", "precio"] };
+// Cada tipo solo admite su campo: reposicion → cantidad · promocion → descuento_pct · precio → precio
+const ajustes = { type: "object", properties: {
+  cantidad: { type: "integer", minimum: 1, example: 24, description: "Solo en reposicion" },
+  descuento_pct: { type: "number", minimum: 1, maximum: 90, example: 20, description: "Solo en promocion" },
+  precio: { type: "number", minimum: 0.01, example: 2.75, description: "Solo en precio" },
+} };
 const limite = (def, max) => ({ name: "limite", in: "query", schema: { type: "integer", default: def, minimum: 1, maximum: max } });
 
 // Respuesta estándar { success: true, data, meta? }
@@ -35,6 +43,9 @@ export const openapi = {
   servers: [{ url: "/api", description: "Este servidor" }],
   tags: [
     { name: "General" }, { name: "Dashboard", description: "Panel izquierdo del front" },
+    { name: "Recomendaciones", description: "Panel de asistencia IA: re-stock, promociones y cambio de precio. Una fila por producto." },
+    { name: "Competencia", description: "Precios de tiendas rivales (los carga el scraper o `npm run db:competencia -- --demo`)" },
+    { name: "Asistente", description: "Chat y voz de la cajera. Gastan créditos de IA: máximo 10 por minuto." },
     { name: "Inventario" }, { name: "Ventas" }, { name: "Tiendas" }, { name: "Productos" },
   ],
   paths: {
@@ -46,6 +57,95 @@ export const openapi = {
       description: "Periodo = últimos `dias` días hasta `hasta`. Cada indicador trae `variacion_pct` contra los `dias` anteriores.",
       parameters: [tienda, { name: "dias", in: "query", schema: { type: "integer", default: 7, minimum: 1, maximum: 90 } }, hasta, limite(3, 20)],
       responses: okJson("Datos del panel", { $ref: "#/components/schemas/Dashboard" }),
+    } },
+
+    "/recomendaciones/{tienda}": { get: {
+      tags: ["Recomendaciones"], summary: "Tabla de sugerencias de un tipo (la genera la primera vez del día)",
+      description:
+        "**Con `tipo`**: si hoy aún no se generó, el agente la genera y la guarda; después devuelve lo guardado (no gasta Gemini en cada recarga). " +
+        "**Sin `tipo`**: solo devuelve lo que ya existe hoy, sin generar (útil para contadores). " +
+        "Incluye las pendientes que agregó el gerente en días anteriores. " +
+        "El agente no repite productos rechazados en 7 días, aceptados hoy ni los que el gerente dejó pendientes, y ajusta cantidad/descuento según cómo los ha corregido el gerente.",
+      parameters: [tienda,
+        { name: "tipo", in: "query", schema: tipoRec, description: "Botón del panel. Sin tipo = solo lo existente" },
+        { name: "regenerar", in: "query", schema: { type: "string", enum: ["1"] }, description: "Descarta las pendientes del agente de ese tipo y genera de nuevo (límite 10/min)" }],
+      responses: { ...okJson("Filas", lista("Recomendacion")), 429: { $ref: "#/components/responses/Error" } },
+    } },
+    "/recomendaciones": { post: {
+      tags: ["Recomendaciones"], summary: "El gerente agrega una opción que el agente no sugirió",
+      requestBody: { required: true, content: { "application/json": {
+        schema: { type: "object", required: ["tienda", "tipo", "sku"], properties: {
+          tienda: { type: "string", example: "S001" }, tipo: tipoRec, sku: { type: "string", example: "SKU-100694" },
+          cantidad: { type: "integer" }, descuento_pct: { type: "number" }, precio: { type: "number" },
+          motivo: { type: "string", example: "Viene puente y se vende más" },
+        } },
+        examples: {
+          reposicion: { value: { tienda: "S001", tipo: "reposicion", sku: "SKU-100694", cantidad: 24 } },
+          promocion: { value: { tienda: "S001", tipo: "promocion", sku: "SKU-100694", descuento_pct: 20 } },
+          precio: { value: { tienda: "S001", tipo: "precio", sku: "SKU-100694", precio: 21.5 } },
+        } } } },
+      responses: { 201: { description: "Creada como pendiente" }, 400: { $ref: "#/components/responses/Error" },
+        404: { $ref: "#/components/responses/Error" }, 409: { $ref: "#/components/responses/Error" } },
+    } },
+    "/recomendaciones/{id}": { patch: {
+      tags: ["Recomendaciones"], summary: "Editar (botón Editar). Sigue pendiente",
+      parameters: [idRec], requestBody: { required: true, content: { "application/json": { schema: ajustes } } },
+      responses: { ...okJson("Fila editada", { $ref: "#/components/schemas/Recomendacion" }), 409: { $ref: "#/components/responses/Error" } },
+    } },
+    "/recomendaciones/{id}/precio": { patch: {
+      tags: ["Recomendaciones"], summary: "Alias de PATCH /recomendaciones/{id} (versión anterior)",
+      parameters: [idRec], requestBody: { required: true, content: { "application/json": { schema: ajustes } } },
+      responses: okJson("Fila editada", { $ref: "#/components/schemas/Recomendacion" }),
+    } },
+    "/recomendaciones/{id}/aceptar": { post: {
+      tags: ["Recomendaciones"], summary: "Aceptar (botón Aceptar)",
+      description: "reposicion → crea un pedido en `purchase_orders` (In transit) · precio → cierra el precio vigente y abre el nuevo en `prices` · " +
+        "promocion → queda registrada como aceptada. Acepta los mismos campos que Editar para editar y aceptar en una sola llamada.",
+      parameters: [idRec], requestBody: { content: { "application/json": { schema: ajustes } } },
+      responses: { ...okJson("Fila aceptada", { $ref: "#/components/schemas/Recomendacion" }), 409: { $ref: "#/components/responses/Error" } },
+    } },
+    "/recomendaciones/{id}/rechazar": { post: {
+      tags: ["Recomendaciones"], summary: "Rechazar (botón Rechazar)",
+      description: "El motivo se guarda para que el agente aprenda. Ese producto no se vuelve a sugerir en 7 días.",
+      parameters: [idRec],
+      requestBody: { content: { "application/json": { schema: { type: "object", properties: { motivo: { type: "string", example: "No hay espacio en el refri" } } } } } },
+      responses: { ...okJson("Fila rechazada", { $ref: "#/components/schemas/Recomendacion" }), 409: { $ref: "#/components/responses/Error" } },
+    } },
+
+    "/competencia/precios": {
+      get: {
+        tags: ["Competencia"], summary: "Último precio de cada competidor",
+        parameters: [{ name: "sku", in: "query", schema: { type: "string", example: "SKU-100694" } }],
+        responses: okJson("Precios", { type: "array", items: { type: "object", properties: {
+          sku: { type: "string" }, producto: { type: "string" }, competidor: { type: "string" },
+          precio: { type: "number" }, fecha: { type: "string" }, fuente: { type: "string", nullable: true } } } }),
+      },
+      post: {
+        tags: ["Competencia"], summary: "Cargar precios (para el scraper). Requiere header x-admin-key",
+        description: "Hasta 1000 por petición. Si ya existe (sku, competidor, fecha) se actualiza. Los SKU que no existen se ignoran.",
+        security: [{ adminKey: [] }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { precios: {
+          type: "array", items: { type: "object", required: ["sku", "competidor", "precio"], properties: {
+            sku: { type: "string", example: "SKU-100694" }, competidor: { type: "string", example: "Competidor A" },
+            precio: { type: "number", example: 22.5 }, fecha: { type: "string", format: "date" }, fuente: { type: "string", example: "scraper" } } } } } } } } },
+        responses: { ...okJson("Resultado: recibidos, guardados, ignorados"), 401: { $ref: "#/components/responses/Error" }, 503: { $ref: "#/components/responses/Error" } },
+      },
+    },
+
+    "/chat": { post: {
+      tags: ["Asistente"], summary: "Pregunta a la cajera (Gemini, con datos de la tienda)",
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["tienda", "mensaje"], properties: {
+        tienda: { type: "string", example: "S001" }, mensaje: { type: "string", maxLength: 300, example: "¿Qué se vendió mejor esta semana?" } } } } } },
+      responses: { ...okJson("{ respuesta }", { type: "object", properties: { respuesta: { type: "string" } } }),
+        429: { $ref: "#/components/responses/Error" }, 503: { $ref: "#/components/responses/Error" } },
+    } },
+    "/voz": { post: {
+      tags: ["Asistente"], summary: "Texto a voz (ElevenLabs). Devuelve audio mp3",
+      description: "La misma frase se guarda en caché y no vuelve a gastar créditos.",
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["texto"], properties: {
+        texto: { type: "string", maxLength: 400, example: "Hola, bienvenido a Otzo" } } } } } },
+      responses: { 200: { description: "Audio", content: { "audio/mpeg": { schema: { type: "string", format: "binary" } } } },
+        429: { $ref: "#/components/responses/Error" }, 503: { $ref: "#/components/responses/Error" } },
     } },
 
     "/inventario": { get: {
@@ -112,6 +212,7 @@ export const openapi = {
   },
 
   components: {
+    securitySchemes: { adminKey: { type: "apiKey", in: "header", name: "x-admin-key", description: "ADMIN_KEY de backend/.env" } },
     responses: {
       Error: {
         description: "Error",
@@ -156,6 +257,19 @@ export const openapi = {
         categoria: { type: "string" }, inicial: { type: "integer" }, recibido: { type: "integer" }, vendidos: { type: "integer" },
         caducado: { type: "integer" }, danado: { type: "integer" }, cierre: { type: "integer" }, en_camino: { type: "integer" },
         horas_sin_stock: { type: "number" }, valor_inventario: { type: "number" },
+      } },
+      Recomendacion: { type: "object", properties: {
+        id: { type: "integer" }, store_id: { type: "string" }, tipo: tipoRec,
+        prioridad: { type: "string", enum: ["alta", "media", "baja"] }, sku: { type: "string" }, producto: { type: "string" },
+        descripcion: { type: "string", description: "Motivo de la sugerencia (Gemini o texto de la regla)" },
+        origen: { type: "string", enum: ["agente", "gerente"] }, estado: { type: "string", enum: ["pendiente", "aceptada", "rechazada"] },
+        editada: { type: "boolean" },
+        cantidad: { type: "integer", nullable: true }, descuento_pct: { type: "number", nullable: true },
+        precio_actual: { type: "number", nullable: true }, precio_propuesto: { type: "number", nullable: true },
+        motivo_rechazo: { type: "string", nullable: true }, propuesta_original: { type: "object", nullable: true },
+        competencia: { type: "object", nullable: true, description: "Solo en precio: promedio, minimo y número de competidores (30 días)",
+          properties: { promedio: { type: "number" }, minimo: { type: "number" }, competidores: { type: "integer" } } },
+        creada_en: { type: "string" }, resuelta_en: { type: "string", nullable: true },
       } },
       Tienda: { type: "object", properties: {
         store_id: { type: "string" }, store_name: { type: "string" }, format: { type: "string" }, operator_type: { type: "string" },
