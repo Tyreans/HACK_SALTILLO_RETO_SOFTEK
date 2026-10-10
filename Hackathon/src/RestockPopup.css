@@ -1,0 +1,379 @@
+:root {
+  font-family: Inter, 'Segoe UI', sans-serif;
+  color: #111827;
+  background: #f3f5f7;
+  line-height: 1.4;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+}
+
+body {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #edf0f4;
+}
+
+button {
+  font: inherit;
+}
+
+.page-shell {
+  width: 100%;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 40px 24px;
+}
+
+.restock-modal {
+  width: min(100%, 1000px);
+  background: #ffffff;
+  border: 1px solid #e1e5eb;
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(17, 24, 39, 0.08);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.header-copy h1 {
+  margin: 0;
+  color: #111827;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.header-copy p {
+  margin: 0;
+  color: #3b4758;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.header-copy span {
+  color: #697586;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  max-width: 820px;
+}
+
+.close-button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 14px;
+  background: #f3f5f7;
+  color: #697586;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.close-button:hover {
+  transform: scale(1.04);
+}
+
+.close-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.product-list {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+}
+
+.restock-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1.7fr) 160px 180px 260px;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.product-visual {
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  display: grid;
+  place-items: center;
+  font-size: 2rem;
+  background: #f8fafc;
+}
+
+.product-visual.coffee {
+  background: linear-gradient(135deg, #f3eee6, #f7f2eb);
+}
+
+.product-visual.avocado {
+  background: linear-gradient(135deg, #edf9f0, #f1f9ef);
+}
+
+.product-visual.banana {
+  background: linear-gradient(135deg, #fff7d9, #fff4c0);
+}
+
+.product-info {
+  min-width: 0;
+}
+
+.product-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.product-title-wrap h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff3eb;
+  color: #d97706;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.product-subtitle,
+.product-stock {
+  color: #697586;
+  font-size: 0.75rem;
+}
+
+.product-subtitle {
+  margin-bottom: 4px;
+}
+
+.quantity-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  max-width: 140px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.quantity-box button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.quantity-box button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.quantity-box strong {
+  min-width: 28px;
+  text-align: center;
+  font-size: 1rem;
+  color: #111827;
+}
+
+.date-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-self: start;
+  min-width: 0;
+}
+
+.date-box span {
+  color: #697586;
+  font-size: 0.75rem;
+}
+
+.date-box strong {
+  color: #111827;
+  font-size: 0.875rem;
+}
+
+.action-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.secondary-action,
+.primary-action,
+.ghost-action,
+.cancel-button,
+.confirm-button {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.secondary-action:hover,
+.primary-action:hover,
+.ghost-action:hover,
+.cancel-button:hover,
+.confirm-button:hover {
+  transform: translateY(-1px);
+}
+
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-color: #dfe5ec;
+  background: #fff;
+  color: #2a3849;
+}
+
+.secondary-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.primary-action {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.ghost-action {
+  background: #fff;
+  border-color: #dfe5ec;
+  color: #4b5563;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px 18px;
+  background: #fff;
+}
+
+.cancel-button {
+  background: #fff;
+  color: #374151;
+  border-color: #dfe5ec;
+}
+
+.confirm-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, #0f172a, #111827);
+  color: #fff;
+  border-color: #0f172a;
+}
+
+.total-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 920px) {
+  .restock-row {
+    grid-template-columns: 72px 1fr;
+  }
+
+  .quantity-box,
+  .date-box,
+  .action-group {
+    grid-column: 2;
+  }
+
+  .modal-footer {
+    justify-content: stretch;
+  }
+
+  .cancel-button,
+  .confirm-button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  .modal-header {
+    padding: 18px 16px 14px;
+  }
+
+  .restock-row {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .modal-footer {
+    padding: 12px 16px 16px;
+  }
+
+  .action-group {
+    justify-content: flex-start;
+  }
+}
