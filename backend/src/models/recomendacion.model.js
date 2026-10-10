@@ -124,7 +124,9 @@ export async function reemplazarAgente(tienda, tipo, items, { regenerar = false 
         [tienda, tipo, i.prioridad, i.producto, i.descripcion, i.sku, i.cantidad ?? null,
          i.descuento_pct ?? null, i.precio_actual ?? null, i.precio_propuesto ?? null,
          JSON.stringify({ cantidad: i.cantidad ?? null, descuento_pct: i.descuento_pct ?? null, precio_propuesto: i.precio_propuesto ?? null,
-                          fecha_inicio: i.fecha_inicio ?? null, fecha_fin: i.fecha_fin ?? null }),
+                          existencia: i.existencia ?? null, sobrante_proyectado: i.sobrante_proyectado ?? null,
+                          fecha_inicio: i.fecha_inicio ?? null, fecha_fin: i.fecha_fin ?? null,
+                          actualizar_promo_id: i.actualizar_promo_id ?? null }),
          i.fecha_inicio ?? null, i.fecha_fin ?? null]
       );
     }
@@ -341,20 +343,61 @@ export async function aceptar(id, ajustes = {}) {
     }
     if (r.tipo === "promocion") {
       if (!v.descuento_pct) throw new ApiError(400, "La promoción no tiene % de descuento");
-      aplicadoId = `PR-WEB-${id}`;
-      await client.query(
-        `INSERT INTO promotions (promo_id, promo_name, promo_type, start_date, end_date, discount_pct,
-                                 department, category, region_scope, store_id, sku, origen, recomendacion_id)
-         SELECT $1, left('Promo ' || p.product_name, 80), 'Percent Off',
-                coalesce($2::date, CURRENT_DATE), coalesce($3::date, coalesce($2::date, CURRENT_DATE) + 6), $4,
-                p.department, p.category, 'TIENDA', $5, p.sku, $6, $7
-           FROM products p WHERE p.sku = $8`,
-        [aplicadoId, v.fecha_inicio, v.fecha_fin, v.descuento_pct, r.store_id, r.origen, id, r.sku]
+      const propuesta = typeof r.propuesta_original === "string"
+        ? JSON.parse(r.propuesta_original)
+        : r.propuesta_original ?? {};
+      const promoExistenteId = propuesta.actualizar_promo_id;
+      const { rows: datosPromo } = await client.query(
+        `SELECT p.unit_cost AS costo, pv.unit_price AS precio, p.discontinued_date::text AS fecha_retiro
+           FROM products p
+           JOIN v_precio_vigente pv ON pv.sku = p.sku AND pv.store_id = $1
+          WHERE p.sku = $2`,
+        [r.store_id, r.sku]
       );
+      const datos = datosPromo[0];
+      if (!datos || !Number.isFinite(datos.precio) || !Number.isFinite(datos.costo)
+          || datos.precio <= datos.costo || datos.costo <= 0) {
+        throw new ApiError(409, "No se puede activar la promoción: falta precio o costo unitario fiable");
+      }
+      if (!datos.fecha_retiro || !v.fecha_inicio || !v.fecha_fin
+          || v.fecha_inicio >= datos.fecha_retiro || v.fecha_fin < v.fecha_inicio
+          || v.fecha_fin >= datos.fecha_retiro) {
+        throw new ApiError(409, "La promoción debe iniciar antes de la fecha de retiro del producto");
+      }
+      const diasRestantes = Math.floor((Date.parse(`${datos.fecha_retiro}T00:00:00Z`) - Date.parse(`${v.fecha_inicio}T00:00:00Z`)) / 86_400_000);
+      const precioPromocional = Math.round(datos.precio * (1 - Number(v.descuento_pct) / 100) * 100) / 100;
+      if (precioPromocional < datos.costo || (diasRestantes > 7 && precioPromocional <= datos.costo)) {
+        throw new ApiError(400, "El descuento no puede dejar el precio por debajo del costo ni eliminar el margen antes de los últimos 7 días");
+      }
+      v.precio_propuesto = precioPromocional;
+      if (promoExistenteId) {
+        const { rowCount } = await client.query(
+          `UPDATE promotions
+              SET discount_pct = $1, end_date = $2, recomendacion_id = $3
+            WHERE promo_id = $4 AND store_id = $5 AND sku = $6
+              AND CURRENT_DATE BETWEEN start_date AND end_date`,
+          [v.descuento_pct, v.fecha_fin, id, promoExistenteId, r.store_id, r.sku]
+        );
+        if (rowCount !== 1) throw new ApiError(409, "La promoción que se iba a escalar ya no está vigente");
+        aplicadoId = promoExistenteId;
+      } else {
+        aplicadoId = `PR-WEB-${id}`;
+        const { rowCount } = await client.query(
+          `INSERT INTO promotions (promo_id, promo_name, promo_type, start_date, end_date, discount_pct,
+                                   department, category, region_scope, store_id, sku, origen, recomendacion_id)
+           SELECT $1, left('Promo ' || p.product_name, 80), 'Percent Off',
+                  coalesce($2::date, CURRENT_DATE), $3, $4,
+                  p.department, p.category, 'TIENDA', $5, p.sku, $6, $7
+             FROM products p WHERE p.sku = $8`,
+          [aplicadoId, v.fecha_inicio, v.fecha_fin, v.descuento_pct, r.store_id, r.origen, id, r.sku]
+        );
+        if (rowCount !== 1) throw new ApiError(404, "No se pudo encontrar el producto para crear la promoción");
+      }
       const { rows: fechas } = await client.query(
         "SELECT start_date::text AS i, end_date::text AS f FROM promotions WHERE promo_id = $1",
         [aplicadoId]
       );
+      if (!fechas[0]) throw new ApiError(500, "No se pudo recuperar la promoción creada");
       v.fecha_inicio = fechas[0].i;
       v.fecha_fin = fechas[0].f;
     }

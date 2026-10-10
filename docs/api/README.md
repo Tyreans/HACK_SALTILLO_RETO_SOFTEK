@@ -121,20 +121,20 @@ Cada botón del panel izquierdo (Re-Stock, Promociones, Cambio de precios) abre 
 - Una tienda sin datos devuelve la tabla vacía (`data: []`), no un error.
 - **Los productos y las cifras salen de la base de datos con fórmulas; Gemini solo redacta el motivo** de cada fila. Si Gemini falla o contesta algo inválido, se usa el texto de la regla y el endpoint responde igual.
 
-Reglas (ventana de los últimos 7 días hasta el último día con datos):
+Reglas:
 
 | Tipo | Qué propone | Cómo se calcula |
 |---|---|---|
-| `reposicion` | `cantidad` de piezas a pedir | `venta_diaria × (días de entrega + colchón) × 1.2 − existencia − en camino`. El colchón es 1 día en perecederos y 3 en el resto. Se redondea hacia arriba a cajas completas (`case_size`). En perecederos no se pide más de lo que se alcanza a vender en su vida útil. Prioridad `alta` si la existencia no cubre el tiempo de entrega |
-| `promocion` | `descuento_pct` | Perecederos con merma ≥ 10 % de lo disponible (30 % de descuento si la merma es ≥ 25 %, 20 % si no) o con mucha existencia para su vida útil; el resto, con inventario para 10 días o más (10 %) o 21 días o más (15 %). Nunca baja el precio de costo + 5 % |
+| `reposicion` | `cantidad` de piezas a pedir | Usa todo el historial de inventario sin cierres y calcula demanda con corrección por horas sin stock. Proyecta según el día de semana y los perfiles históricos de festivos/vacaciones; si falta calendario futuro, recurre al perfil semanal/promedio disponible y lo indica en el motivo. Aplica el tiempo de entrega, colchón, 20 % de seguridad, cajas completas y vida útil para perecederos |
+| `promocion` | `descuento_pct` | Usa `products.discontinued_date` como fecha de retiro del almacén (no caducidad). En los 14 días previos proyecta ventas hasta el retiro y ofrece niveles de 10/20/30 % según el sobrante. Si queda inventario durante los últimos 7 días puede sugerir una escalada; el precio promocional nunca queda por debajo del costo y solo puede alcanzar el costo en esa etapa final. No propone si falta precio o costo fiable |
 | `precio` | `precio_propuesto` | Compara con el promedio de la competencia (últimos 30 días). Si cuesta más de 5 % arriba, baja al promedio sin pasar de costo + 15 %. Si cuesta más de 10 % abajo y el producto se vende, sube a 97 % del promedio. Si ningún producto de la tienda tiene precio de competencia, propone −10 % a los de peor venta y lo dice en el motivo |
 
 ### Qué aprende el agente de las decisiones del gerente
 
 - **Rechazar:** el producto no se vuelve a sugerir de ese tipo durante 7 días. El `motivo` queda guardado.
-- **Editar y aceptar:** si el gerente suele aceptar menos que lo propuesto (por ejemplo 24 en lugar de 42), las siguientes sugerencias de ese producto se ajustan al promedio de sus últimas 3 aceptaciones (entre 0.3× y 1.5× para cantidad, y entre 0.5× y 1.5× para descuento).
+- **Editar y aceptar reposición:** si el gerente suele aceptar menos que lo propuesto (por ejemplo 24 en lugar de 42), las siguientes cantidades de ese producto se ajustan al promedio de sus últimas 3 aceptaciones (entre 0.3× y 1.5×). Los descuentos siguen los niveles de liquidación y los límites de margen descritos arriba.
 - **Aceptado hoy o pendiente a mano:** tampoco se vuelve a sugerir.
-- Cada decisión se reporta además a `backend/src/services/memoria.service.js` (`registrarDecision`), que está **vacío a propósito**: ahí se conecta Backboard. La misma función `contexto` devuelve lo que el agente recuerda para incluirlo en el prompt de Gemini.
+- Cada decisión se reporta a Backboard desde `backend/src/services/memoria.service.js` cuando `BACKBOARD_API_KEY` está configurada; los errores de memoria se registran y no impiden responder la acción del gerente.
 
 ### Qué pasa al aceptar
 
@@ -142,7 +142,7 @@ Reglas (ventana de los últimos 7 días hasta el último día con datos):
 |---|---|
 | `reposicion` | Crea una orden de compra `In transit` en `purchase_orders` con la cantidad final, el proveedor del producto y la fecha esperada según su tiempo de entrega |
 | `precio` | Cierra el precio vigente en `prices` (`effective_to` = ayer) y abre uno nuevo desde hoy con `price_list = 'otzo-web'` |
-| `promocion` | Solo queda registrada como aceptada: las promociones del dataset son por categoría, no por producto |
+| `promocion` | Crea una promoción de producto y tienda en `promotions`; si la recomendación escala una promoción propia vigente, actualiza su descuento y vigencia en lugar de crear otra |
 
 Todo ocurre en una transacción. Una recomendación ya resuelta no se puede volver a aceptar, rechazar ni editar (`409`).
 

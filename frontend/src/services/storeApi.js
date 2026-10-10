@@ -225,7 +225,7 @@ export function normalizeRecommendation(row) {
 
   const precioActual = Number(row.precio_actual) || (row.propuesta_original?.precio_actual ? Number(row.propuesta_original.precio_actual) : 4.50);
   const precioSugerido = Number(row.precio_propuesto) || (row.propuesta_original?.precio_propuesto ? Number(row.propuesta_original.precio_propuesto) : precioActual);
-  const descPct = Number(row.descuento_pct) || 20;
+  const descPct = Number(row.descuento_pct ?? row.propuesta_original?.descuento_pct) || (isPrice ? 20 : 0);
 
   // Rango de competencia si existe
   const minComp = row.competencia?.minimo ?? (precioActual * 0.85).toFixed(2);
@@ -261,18 +261,19 @@ export function normalizeRecommendation(row) {
     competencia: row.competencia,
 
     // Campos de Reposición
-    stockActual: row.stock_actual ?? 0,
-    stockSugerido: row.cantidad ?? 24,
-    cantidadDeseada: row.cantidad ?? 24,
-    stockObjetivo: (row.cantidad ?? 24) * 2,
-    fechaProgramada: '14 oct 2026',
+    stockActual: row.propuesta_original?.existencia ?? null,
+    stockSugerido: row.cantidad ?? null,
+    cantidadDeseada: row.cantidad ?? null,
+    stockObjetivo: row.propuesta_original?.sobrante_proyectado ?? null,
+    fechaProgramada: null,
 
     // Campos de Promoción
     precioRegular: precioActual,
     precioPromo: Math.round(precioActual * (1 - descPct / 100) * 100) / 100,
     descuentoSugerido: descPct,
     descuentoDeseado: descPct,
-    horario: '7:00 am – 12:00 pm',
+    fechaInicio: row.fecha_inicio || '',
+    fechaFin: row.fecha_fin || '',
     motivo: row.motivo || '',
   };
 }
@@ -448,14 +449,18 @@ export async function getStoreRecommendations(storeId, tipo = null) {
     if (res.ok) {
       const json = await res.json();
       const list = json.data || json.datos;
-      if (Array.isArray(list) && list.length > 0) {
+      if (Array.isArray(list) && (list.length > 0 || tipo !== 'precio')) {
         return list.map(normalizeRecommendation);
       }
     }
+    if (tipo === 'reposicion' || tipo === 'promocion') {
+      throw new Error(`API /recomendaciones/${storeId} respondió ${res.status}`);
+    }
   } catch (err) {
     console.warn(`API /recomendaciones/${storeId} no disponible:`, err.message);
+    if (tipo === 'reposicion' || tipo === 'promocion') throw err;
   }
-  return initialRecommendations.filter((r) => !tipo || r.tipo === tipo);
+  return initialRecommendations.filter((r) => r.tipo === 'precio' && (!tipo || r.tipo === tipo));
 }
 
 /**
@@ -491,6 +496,8 @@ export async function acceptRecommendationApi(id, payload = {}) {
     if (payload.cantidad != null) cleanPayload.cantidad = Number(payload.cantidad);
     if (payload.descuento_pct != null) cleanPayload.descuento_pct = Number(payload.descuento_pct);
     if (payload.precio != null) cleanPayload.precio = Number(payload.precio);
+    if (payload.fecha_inicio) cleanPayload.fecha_inicio = payload.fecha_inicio;
+    if (payload.fecha_fin) cleanPayload.fecha_fin = payload.fecha_fin;
 
     const res = await fetch(`${API_BASE_URL}/recomendaciones/${id}/aceptar`, {
       method: 'POST',

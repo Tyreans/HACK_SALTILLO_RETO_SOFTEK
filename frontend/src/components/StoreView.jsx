@@ -36,16 +36,20 @@ export default function StoreView({
     let isMounted = true;
 
     async function loadData() {
-      const [dash, inv, recs] = await Promise.all([
+      const results = await Promise.allSettled([
         getDashboardData(storeId),
         getStoreInventory(storeId),
         getStoreRecommendations(storeId),
       ]);
 
       if (isMounted) {
-        if (dash) setDashboardData(dash);
-        if (inv) setInventoryList(inv);
-        if (recs) setRecommendations(recs);
+        const [dash, inv, recs] = results;
+        if (dash.status === 'fulfilled' && dash.value) setDashboardData(dash.value);
+        if (inv.status === 'fulfilled' && inv.value) setInventoryList(inv.value);
+        if (recs.status === 'fulfilled') setRecommendations(recs.value);
+        if (recs.status === 'rejected') {
+          onShowAlert?.({ type: 'error', message: `No se pudieron cargar recomendaciones: ${recs.reason.message}` });
+        }
       }
     }
 
@@ -53,23 +57,22 @@ export default function StoreView({
     return () => {
       isMounted = false;
     };
-  }, [storeId]);
+  }, [storeId, onShowAlert]);
 
   // Carga reactiva de sugerencias por tipo al abrir el modal
   useEffect(() => {
     if (!activeSuggestionModal) return;
-    const hasItems = recommendations.some((r) => r.tipo === activeSuggestionModal);
-    if (!hasItems) {
-      getStoreRecommendations(storeId, activeSuggestionModal).then((recs) => {
-        if (recs && recs.length > 0) {
-          setRecommendations((prev) => {
-            const others = prev.filter((r) => r.tipo !== activeSuggestionModal);
-            return [...others, ...recs];
-          });
-        }
-      });
-    }
-  }, [activeSuggestionModal, storeId]);
+    getStoreRecommendations(storeId, activeSuggestionModal).then((recs) => {
+      if (recs) {
+        setRecommendations((prev) => {
+          const others = prev.filter((r) => r.tipo !== activeSuggestionModal);
+          return [...others, ...recs];
+        });
+      }
+    }).catch((error) => {
+      onShowAlert?.({ type: 'error', message: `No se pudieron cargar las recomendaciones: ${error.message}` });
+    });
+  }, [activeSuggestionModal, storeId, onShowAlert]);
 
   // Aceptar / Rechazar recomendación con verificación de respuesta
   const handleAcceptRec = async (recId, recTitle, payload = {}) => {
@@ -407,21 +410,23 @@ export default function StoreView({
       {activeSuggestionModal && (
         <UnifiedSuggestionModal
           type={activeSuggestionModal}
-          items={
-            recommendations.filter((r) => r.tipo === activeSuggestionModal).length > 0
+          items={['reposicion', 'promocion'].includes(activeSuggestionModal)
+            ? recommendations.filter((r) => r.tipo === activeSuggestionModal)
+            : recommendations.filter((r) => r.tipo === activeSuggestionModal).length > 0
               ? recommendations.filter((r) => r.tipo === activeSuggestionModal)
-              : undefined
-          }
+              : undefined}
           onClose={() => setActiveSuggestionModal(null)}
           onApplyAction={async (item, actionType) => {
             if (actionType === 'accept') {
               const payload = {};
               if (item.tipo === 'reposicion' && item.cantidadDeseada) payload.cantidad = Number(item.cantidadDeseada);
               if (item.tipo === 'promocion' && item.descuentoDeseado) payload.descuento_pct = Number(item.descuentoDeseado);
+              if (item.tipo === 'promocion' && item.fechaInicio) payload.fecha_inicio = item.fechaInicio;
+              if (item.tipo === 'promocion' && item.fechaFin) payload.fecha_fin = item.fechaFin;
               if (item.tipo === 'precio' && item.precioDeseado) payload.precio = Number(item.precioDeseado);
-              await handleAcceptRec(item.id, item.name, payload);
+              return handleAcceptRec(item.id, item.name, payload);
             } else {
-              await handleRejectRec(item.id, item.name, item.motivo);
+              return handleRejectRec(item.id, item.name, item.motivo);
             }
           }}
         />

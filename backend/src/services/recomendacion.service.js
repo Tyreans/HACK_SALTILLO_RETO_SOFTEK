@@ -7,6 +7,7 @@ import { periodo } from "./dashboard.service.js";
 import * as Memoria from "./memoria.service.js";
 import { generar } from "./gemini.service.js";
 import { ApiError } from "../utils/apiError.js";
+import { query } from "../config/db.config.js";
 
 const MAX_FILAS = 8;
 const hoy = () => new Date().toISOString().slice(0, 10);
@@ -51,7 +52,7 @@ function reposicion(c, factor = 1) {
       : "",
   ].filter(Boolean).join(" ");
   return {
-    tipo: "reposicion", sku: c.sku, producto: c.producto, cantidad,
+    tipo: "reposicion", sku: c.sku, producto: c.producto, cantidad, existencia: c.existencia,
     prioridad: dias <= c.entrega ? "alta" : dias <= c.entrega + 2 ? "media" : "baja",
     orden: dias,
     hecho: `Quedan ${c.existencia} piezas (≈${dias.toFixed(1)} días). ` +
@@ -62,36 +63,79 @@ function reposicion(c, factor = 1) {
   };
 }
 
-// Promoción: merma por caducidad o inventario para muchos días. Nunca bajo costo + 5 %.
-function promocion(c, factor = 1) {
-  const vd = Math.max(c.venta_diaria, 0.01);
-  const merma = c.caducado / Math.max(c.vendido + c.caducado, 1);
-  const cobertura = c.existencia / vd;
+function descuentoMaximo(precio, costo, permitirEquilibrio) {
+  for (let descuento = 99; descuento >= 0; descuento -= 1) {
+    const final = r2(precio * (1 - descuento / 100));
+    if (permitirEquilibrio ? final >= costo : final > costo) return descuento;
+  }
+  return 0;
+}
 
-  let descuento, prioridad, hecho;
-  if (c.perecedero && (merma >= 0.1 || c.existencia >= vd * c.vida_util * 0.7)) {
-    descuento = merma >= 0.25 ? 30 : 20;
-    prioridad = merma >= 0.25 ? "alta" : "media";
-    hecho = merma >= 0.1
-      ? `Se caducó el ${Math.round(merma * 100)} % de lo disponible esta semana y quedan ${c.existencia} piezas.`
-      : `Hay ${c.existencia} piezas y su vida útil es de ${c.vida_util} días.`;
-  } else if (cobertura >= 10) {
-    descuento = cobertura >= 21 ? 15 : 10;
-    prioridad = "baja";
-    hecho = `Hay inventario para ${Math.round(cobertura)} días y vende ${c.venta_diaria.toFixed(1)} al día.`;
-  } else return null;
+// La fase temprana conserva margen; la fase final puede liquidar a costo, nunca debajo.
+function promocion(c) {
+  const dias = Number(c.dias_retiro);
+  const existencia = Number(c.existencia);
+  const sobrante = Number(c.sobrante_proyectado);
+  const precio = Number(c.precio);
+  const costo = Number(c.costo);
+  if (![dias, existencia, sobrante, precio, costo].every(Number.isFinite)
+      || dias < 1 || existencia < 1 || sobrante < 1 || precio <= costo || costo <= 0) return null;
 
-  const techo = Math.floor((1 - (c.costo * 1.05) / c.precio) * 100);
-  descuento = Math.min(Math.round(descuento * factor), techo);
-  descuento = Math.min(Math.max(descuento, 5), techo);
-  if (techo < 5) return null;
+  const promoActivaId = c.promocion_activa_id;
+  const promoActivaRelacionada = c.promocion_activa_recomendacion_id != null;
+  let descuento;
+  let escalar = false;
 
-  // Vigencia: los perecederos rotan rápido (3 días); el resto, una semana
-  const fecha_inicio = hoy();
-  const fecha_fin = sumarDias(fecha_inicio, c.perecedero ? 2 : 6);
+  if (dias > 7) {
+    if (promoActivaId) return null;
+    const proporcionSobrante = sobrante / existencia;
+    const objetivo = proporcionSobrante >= 0.66 ? 30 : proporcionSobrante >= 0.33 ? 20 : 10;
+    const maximoConMargen = descuentoMaximo(precio, costo, false);
+    descuento = [30, 20, 10].find((nivel) => nivel <= objetivo && nivel <= maximoConMargen);
+    if (!descuento || descuento < 1) return null;
+  } else if (promoActivaId && promoActivaRelacionada) {
+    const descuentoActual = Number(c.descuento_activo || 0);
+    const maximoConMargen = descuentoMaximo(precio, costo, false);
+    const siguienteNivel = [10, 20, 30].find((nivel) => nivel > descuentoActual && nivel <= maximoConMargen);
+    descuento = siguienteNivel ?? descuentoMaximo(precio, costo, true);
+    if (descuento <= Number(c.descuento_activo || 0)) return null;
+    escalar = true;
+  } else if (promoActivaId) {
+    return null;
+  } else {
+    const objetivo = 30;
+    const maximoConMargen = descuentoMaximo(precio, costo, false);
+    descuento = [30, 20, 10].find((nivel) => nivel <= objetivo && nivel <= maximoConMargen);
+    if (!descuento || descuento < 1) return null;
+  }
+
+  const fecha_inicio = c.fecha_calculo;
+  const fecha_fin = sumarDias(c.fecha_retiro, -1);
+  const precioPromocional = r2(precio * (1 - descuento / 100));
+  const breakEven = Math.abs(precioPromocional - costo) < 0.005;
+  const faltantesCalendario = Number(c.dias_calendario_futuro) < Number(c.dias_futuros);
+  const razonEscala = escalar
+    ? `La promoción vigente es ${Number(c.descuento_activo)}%; quedan ${dias} días y se proyecta inventario sin vender.`
+    : `${dias} días para retirar el producto; se proyectan ${sobrante} unidades sin vender de ${existencia}.`;
+
   return {
-    tipo: "promocion", sku: c.sku, producto: c.producto, descuento_pct: descuento,
-    precio_actual: c.precio, prioridad, orden: -descuento, hecho, fecha_inicio, fecha_fin,
+    tipo: "promocion",
+    sku: c.sku,
+    producto: c.producto,
+    descuento_pct: descuento,
+    existencia,
+    sobrante_proyectado: sobrante,
+    precio_actual: precio,
+    precio_propuesto: precioPromocional,
+    prioridad: dias <= 7 || sobrante / existencia >= 0.66 ? "alta" : "media",
+    orden: dias - sobrante / existencia,
+    hecho: `${razonEscala} Precio regular $${precio.toFixed(2)}, promoción $${precioPromocional.toFixed(2)} ` +
+      `(costo $${costo.toFixed(2)}${breakEven ? ", punto de equilibrio" : ", conserva margen"}). ` +
+      `Inventario registrado el ${c.fecha_inventario}; la promoción termina ${fecha_fin}.` +
+      (faltantesCalendario ? ` Calendario futuro incompleto (${c.dias_calendario_futuro}/${c.dias_futuros} días); se usan patrones históricos disponibles.` : ""),
+    fecha_inicio,
+    fecha_fin,
+    actualizar_promo_id: escalar ? promoActivaId : null,
   };
 }
 
@@ -174,19 +218,16 @@ async function redactar(items, tipo, tienda) {
 // ------------------------------------------------------------------ generación
 
 async function generarItems(tienda, tipo) {
-  const [excluidos, factores] = await Promise.all([
-    Rec.skusExcluidos(tienda, tipo),
-    Rec.factoresAprendidos(tienda, tipo),
-  ]);
+  const excluidos = await Rec.skusExcluidos(tienda, tipo);
 
   let items;
   if (tipo === "reposicion") {
+    const factores = await Rec.factoresAprendidos(tienda, tipo);
     const hasta = await Candidatos.ultimaFechaInventario(tienda);
     if (!hasta) throw new ApiError(409, `La tienda ${tienda} no tiene historial de inventario para generar reposición`);
     items = (await Candidatos.reposicion(tienda, hasta)).map((c) => reposicion(c, enRango(factores.get(c.sku) ?? 1, 0.3, 1.5)));
   } else if (tipo === "promocion") {
-    const { hasta } = await Venta.rangoFechas();
-    items = (await Candidatos.promocion(tienda, hasta)).map((c) => promocion(c, enRango(factores.get(c.sku) ?? 1, 0.5, 1.5)));
+    items = (await Candidatos.promocion(tienda)).map(promocion);
   } else {
     const { hasta } = await Venta.rangoFechas();
     const filas = await Candidatos.precios(tienda, hasta);
@@ -211,23 +252,27 @@ export async function obtener({ tienda, tipo, regenerar = false }) {
   return Rec.delDia(tienda, tipo);
 }
 
-export async function generarReposicionDiaria({ tienda } = {}) {
+export async function generarRecomendacionesDiarias({ tienda } = {}) {
   const ordenesExportadas = await Rec.exportarOrdenesPendientes();
   const tiendas = tienda ? [{ store_id: tienda }] : await Tienda.paraReposicion();
   const resultados = [];
   const errores = [];
 
   for (const actual of tiendas) {
-    try {
-      const recomendaciones = await obtener({ tienda: actual.store_id, tipo: "reposicion", regenerar: true });
-      resultados.push({ tienda: actual.store_id, recomendaciones: recomendaciones.length });
-    } catch (error) {
-      errores.push({ tienda: actual.store_id, mensaje: error.message });
-      console.error(`No se pudo generar reposición para ${actual.store_id}:`, error.message);
+    for (const tipo of ["reposicion", "promocion"]) {
+      try {
+        const recomendaciones = await obtener({ tienda: actual.store_id, tipo, regenerar: true });
+        resultados.push({ tienda: actual.store_id, tipo, recomendaciones: recomendaciones.length });
+      } catch (error) {
+        errores.push({ tienda: actual.store_id, tipo, mensaje: error.message });
+        console.error(`No se pudo generar ${tipo} para ${actual.store_id}:`, error.message);
+      }
     }
   }
   return { ordenesExportadas, procesadas: resultados, errores };
 }
+
+export const generarReposicionDiaria = generarRecomendacionesDiarias;
 
 export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin }) {
   if (!(await Tienda.obtener(tienda))) throw new ApiError(404, `La tienda ${tienda} no existe`);
@@ -245,8 +290,31 @@ export async function crearManual({ tienda, tipo, sku, cantidad, descuento_pct, 
   }
   if (tipo === "promocion") {
     fecha_inicio ??= hoy();
-    fecha_fin ??= sumarDias(fecha_inicio, 6);
+    if (!Number.isFinite(producto.precio) || !Number.isFinite(producto.costo)
+        || producto.precio <= producto.costo || producto.costo <= 0) {
+      throw new ApiError(409, "No se puede proponer una promoción sin precio vigente y costo unitario válido");
+    }
+    const { rows } = await query(
+      "SELECT discontinued_date::text AS fecha_retiro FROM products WHERE sku = $1",
+      [sku]
+    );
+    if (!rows[0]?.fecha_retiro || rows[0].fecha_retiro <= hoy()) {
+      throw new ApiError(409, "El producto no tiene una fecha futura de retiro para validar el descuento");
+    }
+    if (fecha_inicio >= rows[0].fecha_retiro) {
+      throw new ApiError(400, "La promoción debe iniciar antes de la fecha de retiro del producto");
+    }
+    const diasParaRetiro = Math.floor((Date.parse(`${rows[0].fecha_retiro}T00:00:00Z`) - Date.parse(`${fecha_inicio}T00:00:00Z`)) / 86_400_000);
+    const maximo = descuentoMaximo(producto.precio, producto.costo, diasParaRetiro <= 7);
+    if (descuento_pct > maximo) {
+      throw new ApiError(400, `El descuento máximo permitido hoy es ${maximo}% para respetar el costo y la fecha de retiro`);
+    }
+    const ultimoDiaPromo = sumarDias(rows[0].fecha_retiro, -1);
+    fecha_fin ??= ultimoDiaPromo;
     if (fecha_fin < fecha_inicio) throw new ApiError(400, "fecha_fin no puede ser anterior a fecha_inicio");
+    if (fecha_fin > ultimoDiaPromo) {
+      throw new ApiError(400, "La promoción debe terminar antes de la fecha de retiro del producto");
+    }
   }
   return Rec.crearManual({ tienda, tipo, producto, cantidad, descuento_pct, precio, motivo, fecha_inicio, fecha_fin });
 }

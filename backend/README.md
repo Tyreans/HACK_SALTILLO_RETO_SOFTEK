@@ -53,11 +53,12 @@ npm start                     # API en http://localhost:5000/api; chat en http:/
   GROUP BY r.id, r.aplicado_id;
   ```
   Las coincidencias no inequívocas no se enlazan automáticamente; revísalas antes de corregirlas manualmente.
-- Para generar las recomendaciones diarias de reposición, ejecuta desde `backend/`:
+- Para generar las recomendaciones diarias de reposición y promociones, ejecuta desde `backend/`:
   ```bash
-  npm run recomendaciones:reposicion
+  npm run recomendaciones:generar
   ```
-  Opcionalmente se puede limitar a una tienda: `npm run recomendaciones:reposicion -- --tienda S001`. El comando procesa las tiendas abiertas en secuencia y reintenta exportar las órdenes aceptadas cuyo JSON aún esté pendiente. El cron de Vultr debe invocarlo en la madrugada (por ejemplo, a las 03:00 en la zona horaria del servidor, sujeto a las métricas reales de tráfico); este repositorio no crea ni programa ese cron.
+  Opcionalmente se puede limitar a una tienda: `npm run recomendaciones:generar -- --tienda S001`. El comando procesa las tiendas abiertas en secuencia y reintenta exportar las órdenes aceptadas cuyo JSON aún esté pendiente. `npm run recomendaciones:reposicion` se conserva como alias compatible. El cron debe invocarlo una vez al día; este repositorio no crea ni programa ese cron.
+- Las promociones se basan en `products.discontinued_date` (fecha de retiro del almacén, no caducidad): detectan inventario proyectado sin vender, recomiendan descuentos escalonados de 10/20/30 % a partir de los 14 días previos y una escalada si queda inventario durante los últimos 7 días. Requieren aprobación del gerente, actualizan la promoción vigente al escalar y nunca fijan el precio por debajo del costo. Si faltan precio o costo fiables, se omite la propuesta.
 - Al aceptar una reposición, el backend registra una sola orden por recomendación y escribe un archivo idempotente `backend/data/purchase-orders/<po_id>.json`. Si falla la escritura, la API lo informa y se puede reintentar; el siguiente comando diario también repara exportaciones pendientes. La carpeta generada está excluida de Git.
 - Los CSV no se suben al repo (reglas del hackathon); cada quien los copia en `backend/db/datos/`.
 - Endpoints: ver [`docs/api/README.md`](../docs/api/README.md). Tablas: ver [`docs/database/README.md`](../docs/database/README.md).

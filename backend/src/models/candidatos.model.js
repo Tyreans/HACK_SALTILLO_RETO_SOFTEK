@@ -1,17 +1,20 @@
 import { query } from "../config/db.config.js";
 
 // Consultas que arman la lista de productos candidatos para cada tipo de recomendación.
-// Reposición analiza todo el historial; promoción y precios conservan sus ventanas actuales.
-const VENTANA = 7;
 
 // Re-stock: existencia, en camino, venta diaria, caja del proveedor y tiempo de entrega
 export async function reposicion(tienda, hasta) {
   const { rows } = await query(
     `WITH historico AS (
-       SELECT i.sku, c.day_of_week, c.is_weekend, c.is_holiday, c.is_school_break,
+       SELECT i.sku,
+              coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM i.date)::int]) AS day_of_week,
+              coalesce(c.is_weekend, extract(isodow FROM i.date) IN (6, 7)) AS is_weekend,
+              coalesce(c.is_holiday, false) AS is_holiday,
+              coalesce(c.is_school_break, false) AS is_school_break,
+              c.holiday_name,
               i.units_sold::numeric * 24 / NULLIF(24 - i.stockout_hours, 0) AS demanda
          FROM inventory_daily i
-         JOIN calendar c ON c.date = i.date
+         LEFT JOIN calendar c ON c.date = i.date
         WHERE i.store_id = $1 AND i.date <= $2::date AND i.stockout_hours < 24
           AND NOT EXISTS (
             SELECT 1 FROM store_closures sc
@@ -27,14 +30,25 @@ export async function reposicion(tienda, hasta) {
          FROM historico
         GROUP BY sku, day_of_week, is_weekend, is_holiday, is_school_break
      ),
+     perfil_feriado AS (
+       SELECT sku, day_of_week, holiday_name, avg(demanda) AS venta_diaria
+         FROM historico
+        WHERE is_holiday
+        GROUP BY sku, day_of_week, holiday_name
+     ),
+     perfil_semana AS (
+       SELECT sku, day_of_week, avg(demanda) AS venta_diaria
+         FROM historico GROUP BY sku, day_of_week
+     ),
      catalogo AS (
        SELECT p.sku, p.product_name AS producto,
               coalesce(p.is_perishable, false) AS perecedero,
               coalesce(p.shelf_life_days, 30) AS vida_util,
               greatest(coalesce(p.case_size, 1), 1) AS caja,
+              p.discontinued_date,
               coalesce(s.standard_lead_time_days, 2) AS entrega
          FROM products p LEFT JOIN suppliers s ON s.supplier_id = p.supplier_id
-        WHERE p.en_catalogo AND p.inventory_tracked IS NOT FALSE AND p.discontinued_date IS NULL
+        WHERE p.en_catalogo AND p.inventory_tracked IS NOT FALSE
      ),
      existencia AS (
        SELECT DISTINCT ON (sku) sku, date, closing_qty, on_order_qty
@@ -43,7 +57,7 @@ export async function reposicion(tienda, hasta) {
         ORDER BY sku, date DESC
      )
      SELECT p.sku, p.producto,
-            p.perecedero, p.vida_util, p.caja, p.entrega,
+            p.perecedero, p.vida_util, p.caja, p.entrega, p.discontinued_date,
             coalesce(pronostico.venta_diaria, prom.venta_diaria, 0) AS venta_diaria,
             prom.venta_diaria AS venta_diaria_historica,
             prom.dias_historicos, exist.closing_qty AS existencia, exist.on_order_qty AS en_camino,
@@ -53,7 +67,12 @@ export async function reposicion(tienda, hasta) {
        JOIN promedio prom ON prom.sku = p.sku
        JOIN existencia exist ON exist.sku = p.sku
        LEFT JOIN LATERAL (
-         SELECT avg(coalesce(perf.venta_diaria, prom.venta_diaria)) AS venta_diaria,
+         SELECT avg(coalesce(
+                  pf.venta_diaria,
+                  perf.venta_diaria,
+                  ps.venta_diaria,
+                  prom.venta_diaria
+                )) AS venta_diaria,
                 count(c.date)::int AS dias_calendario,
                 count(*)::int AS dias_pronosticados,
                 json_agg(json_build_object(
@@ -69,12 +88,22 @@ export async function reposicion(tienda, hasta) {
                   interval '1 day'
                 ) AS horizonte(fecha)
            LEFT JOIN calendar c ON c.date = horizonte.fecha::date
+           LEFT JOIN perfil_feriado pf
+             ON pf.sku = p.sku AND coalesce(c.is_holiday, false)
+            AND pf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND (pf.holiday_name IS NOT DISTINCT FROM c.holiday_name)
            LEFT JOIN perfil perf
-             ON perf.sku = p.sku AND perf.day_of_week = c.day_of_week
-            AND perf.is_weekend = c.is_weekend AND perf.is_holiday = c.is_holiday
-            AND perf.is_school_break = c.is_school_break
+             ON perf.sku = p.sku AND perf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND perf.is_weekend = coalesce(c.is_weekend, extract(isodow FROM horizonte.fecha) IN (6, 7))
+            AND perf.is_holiday = coalesce(c.is_holiday, false)
+            AND perf.is_school_break = coalesce(c.is_school_break, false)
+           LEFT JOIN perfil_semana ps
+             ON ps.sku = p.sku AND ps.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
        ) pronostico ON true
-      WHERE exist.closing_qty IS NOT NULL AND coalesce(pronostico.venta_diaria, prom.venta_diaria) > 0`,
+      WHERE exist.closing_qty IS NOT NULL
+        AND coalesce(pronostico.venta_diaria, prom.venta_diaria) > 0
+        AND (p.discontinued_date IS NULL OR p.discontinued_date >
+             $2::date + p.entrega + CASE WHEN p.perecedero THEN 1 ELSE 3 END)`,
     [tienda, hasta]
   );
   return rows;
@@ -88,27 +117,147 @@ export async function ultimaFechaInventario(tienda) {
   return rows[0]?.hasta ?? null;
 }
 
-// Promociones: productos con exceso de inventario o con merma por caducidad
-export async function promocion(tienda, hasta) {
+// Promociones: demanda proyectada antes de la fecha de retiro del almacén.
+export async function promocion(tienda) {
   const { rows } = await query(
-    `WITH venta AS (
-       SELECT sku, sum(units_sold)::numeric / $3::int AS venta_diaria,
-              sum(units_sold) AS vendido, sum(expired_qty) AS caducado
-         FROM inventory_daily
-        WHERE store_id = $1 AND date BETWEEN ($2::date - ($3::int - 1)) AND $2::date
-        GROUP BY sku
+    `WITH historico AS (
+       SELECT i.sku,
+              coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM i.date)::int]) AS day_of_week,
+              coalesce(c.is_weekend, extract(isodow FROM i.date) IN (6, 7)) AS is_weekend,
+              coalesce(c.is_holiday, false) AS is_holiday,
+              coalesce(c.is_school_break, false) AS is_school_break,
+              c.holiday_name,
+              i.units_sold::numeric * 24 / NULLIF(24 - i.stockout_hours, 0) AS demanda
+         FROM inventory_daily i
+         LEFT JOIN calendar c ON c.date = i.date
+        WHERE i.store_id = $1 AND i.date <= CURRENT_DATE AND i.stockout_hours < 24
+          AND NOT EXISTS (
+            SELECT 1 FROM store_closures sc
+             WHERE sc.store_id = i.store_id AND i.date BETWEEN sc.start_date AND sc.end_date
+          )
+     ),
+     promedio AS (
+       SELECT sku, avg(demanda) AS venta_diaria
+         FROM historico GROUP BY sku
+     ),
+     perfil AS (
+       SELECT sku, day_of_week, is_weekend, is_holiday, is_school_break, avg(demanda) AS venta_diaria
+         FROM historico
+        GROUP BY sku, day_of_week, is_weekend, is_holiday, is_school_break
+     ),
+     perfil_feriado AS (
+       SELECT sku, day_of_week, holiday_name, avg(demanda) AS venta_diaria
+         FROM historico
+        WHERE is_holiday
+        GROUP BY sku, day_of_week, holiday_name
+     ),
+     perfil_semana AS (
+       SELECT sku, day_of_week, avg(demanda) AS venta_diaria
+         FROM historico GROUP BY sku, day_of_week
+     ),
+     catalogo AS (
+       SELECT p.sku, p.product_name AS producto, p.unit_cost AS costo, p.discontinued_date
+         FROM products p
+        WHERE p.en_catalogo AND p.inventory_tracked IS NOT FALSE
+          AND p.discontinued_date > CURRENT_DATE
+          AND p.discontinued_date <= CURRENT_DATE + 14
+          AND p.unit_cost > 0
+     ),
+     existencia_base AS (
+       SELECT DISTINCT ON (i.sku)
+              i.sku, i.date AS inventario_fecha, i.closing_qty, i.on_order_qty
+         FROM inventory_daily i
+        WHERE i.store_id = $1 AND i.date <= CURRENT_DATE
+        ORDER BY i.sku, i.date DESC
      )
-     SELECT p.sku, p.product_name AS producto,
-            coalesce(p.is_perishable, false) AS perecedero,
-            coalesce(p.shelf_life_days, 30) AS vida_util,
-            v.venta_diaria, v.vendido, v.caducado, h.closing_qty AS existencia,
-            pv.unit_price AS precio, coalesce(p.unit_cost, 0) AS costo
-       FROM venta v
-       JOIN inventory_daily h ON h.store_id = $1 AND h.sku = v.sku AND h.date = $2::date
-       JOIN products p ON p.sku = v.sku
-       JOIN v_precio_vigente pv ON pv.store_id = $1 AND pv.sku = v.sku
-      WHERE p.en_catalogo AND p.discontinued_date IS NULL AND h.closing_qty > 0`,
-    [tienda, hasta, VENTANA]
+     SELECT p.sku, p.producto, p.costo, pv.unit_price AS precio,
+            p.discontinued_date::text AS fecha_retiro,
+            CURRENT_DATE::text AS fecha_calculo,
+            (p.discontinued_date - CURRENT_DATE)::int AS dias_retiro,
+            inv.inventario_fecha::text AS fecha_inventario,
+            greatest(inv.closing_qty + coalesce(inv.on_order_qty, 0) - coalesce(pasado.venta_proyectada, 0), 0)::int AS existencia,
+            coalesce(pasado.dias_calendario, 0)::int AS dias_calendario_pasado,
+            coalesce(pasado.dias_pronosticados, 0)::int AS dias_pasados,
+            coalesce(futuro.venta_diaria, prom.venta_diaria, 0) AS venta_diaria,
+            coalesce(futuro.venta_proyectada, 0) AS venta_proyectada,
+            greatest(
+              greatest(inv.closing_qty + coalesce(inv.on_order_qty, 0) - coalesce(pasado.venta_proyectada, 0), 0)
+                - coalesce(futuro.venta_proyectada, 0),
+              0
+            )::int AS sobrante_proyectado,
+            coalesce(futuro.dias_calendario, 0)::int AS dias_calendario_futuro,
+            coalesce(futuro.dias_pronosticados, 0)::int AS dias_futuros,
+            active.promo_id AS promocion_activa_id,
+            active.discount_pct AS descuento_activo,
+            active.recomendacion_id AS promocion_activa_recomendacion_id
+       FROM catalogo p
+       JOIN existencia_base inv ON inv.sku = p.sku
+       JOIN v_precio_vigente pv ON pv.store_id = $1 AND pv.sku = p.sku
+       JOIN promedio prom ON prom.sku = p.sku
+       LEFT JOIN LATERAL (
+         SELECT sum(coalesce(pf.venta_diaria, perf.venta_diaria, ps.venta_diaria, prom.venta_diaria)) AS venta_proyectada,
+                count(c.date)::int AS dias_calendario,
+                count(*)::int AS dias_pronosticados
+           FROM generate_series(
+                  (inv.inventario_fecha + 1)::timestamp,
+                  least(CURRENT_DATE, p.discontinued_date - 1)::timestamp,
+                  interval '1 day'
+                ) AS horizonte(fecha)
+           LEFT JOIN calendar c ON c.date = horizonte.fecha::date
+           LEFT JOIN perfil_feriado pf
+             ON pf.sku = p.sku AND coalesce(c.is_holiday, false)
+            AND pf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND pf.holiday_name IS NOT DISTINCT FROM c.holiday_name
+           LEFT JOIN perfil perf
+             ON perf.sku = p.sku AND perf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND perf.is_weekend = coalesce(c.is_weekend, extract(isodow FROM horizonte.fecha) IN (6, 7))
+            AND perf.is_holiday = coalesce(c.is_holiday, false)
+            AND perf.is_school_break = coalesce(c.is_school_break, false)
+           LEFT JOIN perfil_semana ps
+             ON ps.sku = p.sku AND ps.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+          WHERE inv.inventario_fecha < CURRENT_DATE
+       ) pasado ON true
+       LEFT JOIN LATERAL (
+         SELECT avg(coalesce(pf.venta_diaria, perf.venta_diaria, ps.venta_diaria, prom.venta_diaria)) AS venta_diaria,
+                sum(coalesce(pf.venta_diaria, perf.venta_diaria, ps.venta_diaria, prom.venta_diaria)) AS venta_proyectada,
+                count(c.date)::int AS dias_calendario,
+                count(*)::int AS dias_pronosticados
+           FROM generate_series(
+                  (CURRENT_DATE + 1)::timestamp,
+                  (p.discontinued_date - 1)::timestamp,
+                  interval '1 day'
+                ) AS horizonte(fecha)
+           LEFT JOIN calendar c ON c.date = horizonte.fecha::date
+           LEFT JOIN perfil_feriado pf
+             ON pf.sku = p.sku AND coalesce(c.is_holiday, false)
+            AND pf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND pf.holiday_name IS NOT DISTINCT FROM c.holiday_name
+           LEFT JOIN perfil perf
+             ON perf.sku = p.sku AND perf.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+            AND perf.is_weekend = coalesce(c.is_weekend, extract(isodow FROM horizonte.fecha) IN (6, 7))
+            AND perf.is_holiday = coalesce(c.is_holiday, false)
+            AND perf.is_school_break = coalesce(c.is_school_break, false)
+           LEFT JOIN perfil_semana ps
+             ON ps.sku = p.sku AND ps.day_of_week = coalesce(c.day_of_week, (ARRAY['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])[extract(isodow FROM horizonte.fecha)::int])
+       ) futuro ON true
+       LEFT JOIN LATERAL (
+         SELECT pr.promo_id, pr.discount_pct, pr.recomendacion_id
+           FROM promotions pr
+          WHERE pr.store_id = $1 AND pr.sku = p.sku
+            AND CURRENT_DATE BETWEEN pr.start_date AND pr.end_date
+          ORDER BY pr.start_date DESC, pr.promo_id
+          LIMIT 1
+       ) active ON true
+      WHERE inv.closing_qty + coalesce(inv.on_order_qty, 0) > 0
+        AND greatest(inv.closing_qty + coalesce(inv.on_order_qty, 0) - coalesce(pasado.venta_proyectada, 0), 0) > 0
+        AND greatest(
+              greatest(inv.closing_qty + coalesce(inv.on_order_qty, 0) - coalesce(pasado.venta_proyectada, 0), 0)
+                - coalesce(futuro.venta_proyectada, 0),
+              0
+            ) > 0
+        AND pv.unit_price > p.costo
+      ORDER BY p.discontinued_date, p.sku`,
+    [tienda]
   );
   return rows;
 }

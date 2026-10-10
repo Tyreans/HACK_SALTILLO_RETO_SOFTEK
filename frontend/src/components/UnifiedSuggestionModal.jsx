@@ -174,7 +174,7 @@ export default function UnifiedSuggestionModal({
   const [items, setItems] = useState(() => initialItemsProp || defaultModuleSuggestions[type] || []);
 
   useEffect(() => {
-    if (initialItemsProp && initialItemsProp.length > 0) {
+    if (Array.isArray(initialItemsProp)) {
       setItems(initialItemsProp);
     }
   }, [initialItemsProp]);
@@ -289,14 +289,16 @@ export default function UnifiedSuggestionModal({
                         <div className="mac-metric-point">
                           <span className="mac-dot-current" />
                           <span>Stock actual:</span>
-                          <strong className="mac-val-current">{item.stockActual} u.</strong>
+                          <strong className="mac-val-current">{item.stockActual ?? '—'} u.</strong>
                         </div>
                         <div className="mac-metric-point">
                           <span className="mac-dot-suggested" />
                           <span>Sugerido reposición:</span>
-                          <strong className="mac-val-suggested">+{item.stockSugerido} u.</strong>
+                          <strong className="mac-val-suggested">+{item.stockSugerido ?? '—'} u.</strong>
                         </div>
-                        <span className="mac-range-tag">Stock objetivo: {item.stockObjetivo} u.</span>
+                        {type === 'promocion' && (
+                          <span className="mac-range-tag">Sobrante proyectado: {item.stockObjetivo ?? '—'} u.</span>
+                        )}
                       </>
                     )}
 
@@ -312,7 +314,7 @@ export default function UnifiedSuggestionModal({
                           <span>Precio con descuento:</span>
                           <strong className="mac-val-suggested">${Number(item.precioPromo).toFixed(2)}</strong>
                         </div>
-                        <span className="mac-range-tag">Horario: {item.horario}</span>
+                        <span className="mac-range-tag">Vigencia: {item.fechaInicio || 'hoy'} – {item.fechaFin || 'por definir'}</span>
                       </>
                     )}
                   </div>
@@ -357,7 +359,7 @@ export default function UnifiedSuggestionModal({
                               −
                             </button>
                             <span className="mac-stepper-val">
-                              {item.cantidadDeseada ?? item.stockSugerido}
+                              {item.cantidadDeseada ?? item.stockSugerido ?? 1}
                             </span>
                             <button
                               type="button"
@@ -367,15 +369,6 @@ export default function UnifiedSuggestionModal({
                               +
                             </button>
                           </div>
-                        </div>
-                        <div className="mac-input-col">
-                          <label>Fecha programada de entrega</label>
-                          <input
-                            type="text"
-                            className="mac-text-input"
-                            value={item.fechaProgramada}
-                            onChange={(e) => handleFieldChange(item.id, 'fechaProgramada', e.target.value)}
-                          />
                         </div>
                       </>
                     )}
@@ -389,17 +382,26 @@ export default function UnifiedSuggestionModal({
                             min="1"
                             max="90"
                             className="mac-text-input"
-                            value={item.descuentoDeseado ?? item.descuentoSugerido}
+                            value={item.descuentoDeseado ?? item.descuentoSugerido ?? ''}
                             onChange={(e) => handleFieldChange(item.id, 'descuentoDeseado', e.target.value)}
                           />
                         </div>
                         <div className="mac-input-col">
-                          <label>Vigencia u horario</label>
+                          <label>Inicio</label>
                           <input
-                            type="text"
+                            type="date"
                             className="mac-text-input"
-                            value={item.horario}
-                            onChange={(e) => handleFieldChange(item.id, 'horario', e.target.value)}
+                            value={item.fechaInicio || ''}
+                            onChange={(e) => handleFieldChange(item.id, 'fechaInicio', e.target.value)}
+                          />
+                        </div>
+                        <div className="mac-input-col">
+                          <label>Fin</label>
+                          <input
+                            type="date"
+                            className="mac-text-input"
+                            value={item.fechaFin || ''}
+                            onChange={(e) => handleFieldChange(item.id, 'fechaFin', e.target.value)}
                           />
                         </div>
                       </>
