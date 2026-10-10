@@ -5,6 +5,9 @@ import * as Productos from "../controllers/producto.controller.js";
 import * as Inventario from "../controllers/inventario.controller.js";
 import * as Ventas from "../controllers/venta.controller.js";
 import * as Dashboard from "../controllers/dashboard.controller.js";
+import * as Recs from "../controllers/recomendacion.controller.js";
+import * as Asistente from "../controllers/asistente.controller.js";
+import { limitar } from "../middlewares/rateLimit.middleware.js";
 import { asyncHandler, ok } from "../utils/apiResponse.js";
 
 const router = Router();
@@ -47,5 +50,16 @@ router.get("/inventario/export", Inventario.exportarExcel);
 router.get("/ventas/diarias", Ventas.diarias);
 router.get("/ventas/top-productos", Ventas.topProductos);
 router.get("/promociones", Ventas.promociones);
+
+// Recomendaciones (panel derecho)
+router.get("/recomendaciones/:tienda", Recs.listar);
+router.post("/recomendaciones/:id/aceptar", Recs.aceptar);
+router.post("/recomendaciones/:id/rechazar", Recs.rechazar);
+router.patch("/recomendaciones/:id/precio", Recs.editarPrecio);
+
+// Cajera: cada llamada gasta créditos, por eso el límite
+const limiteIA = limitar({ max: 10, ventanaMs: 60_000 });
+router.post("/chat", limiteIA, Asistente.chat);
+router.post("/voz", limiteIA, Asistente.hablar);
 
 export default router;

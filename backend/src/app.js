@@ -7,6 +7,7 @@ import rutas from "./routes/index.js";
 import { notFound, errorHandler } from "./middlewares/error.middleware.js";
 
 const app = express();
+app.set("trust proxy", 1);
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
