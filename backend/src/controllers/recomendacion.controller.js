@@ -48,6 +48,14 @@ function avisarAlAgente(evento, f) {
   }).catch((e) => console.error("Memoria: no se pudo registrar la decisión:", e.message));
 }
 
+// GET /api/recomendaciones/S001/conteo
+export const conteo = asyncHandler(async (req, res) => {
+  const tienda = tiendaOpcional(req.params.tienda);
+  if (!tienda) throw new ApiError(400, "Falta la tienda");
+  const datos = await Rec.conteoPorTienda(tienda);
+  ok(res, datos);
+});
+
 // GET /api/recomendaciones/S001?tipo=reposicion&regenerar=1
 export const listar = asyncHandler(async (req, res) => {
   const tienda = tiendaOpcional(req.params.tienda);

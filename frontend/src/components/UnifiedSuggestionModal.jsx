@@ -166,15 +166,16 @@ const moduleMeta = {
 
 export default function UnifiedSuggestionModal({
   type = 'precio',
+  store,
   items: initialItemsProp,
   onClose,
   onApplyAction,
 }) {
   const meta = moduleMeta[type] || moduleMeta.precio;
-  const [items, setItems] = useState(() => initialItemsProp || defaultModuleSuggestions[type] || []);
+  const [items, setItems] = useState(() => initialItemsProp ?? (defaultModuleSuggestions[type] || []));
 
   useEffect(() => {
-    if (initialItemsProp && initialItemsProp.length > 0) {
+    if (initialItemsProp !== undefined) {
       setItems(initialItemsProp);
     }
   }, [initialItemsProp]);
@@ -227,6 +228,11 @@ export default function UnifiedSuggestionModal({
               <h2 className={`mac-modal-title ${meta.accentClass}`}>
                 {meta.title}
               </h2>
+              {store && (
+                <span className="mac-store-branch-badge">
+                  📍 {store.name || store.id} ({store.id})
+                </span>
+              )}
             </div>
             <p className="mac-header-sub">{meta.subtitle}</p>
           </div>

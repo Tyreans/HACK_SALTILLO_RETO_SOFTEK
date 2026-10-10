@@ -437,6 +437,26 @@ export async function downloadInventoryExcel(storeId) {
 }
 
 /**
+ * Obtiene el conteo de recomendaciones en la BD por tipo para una sucursal (GET /api/recomendaciones/:tienda/conteo)
+ */
+export async function getRecommendationCounts(storeId) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/recomendaciones/${storeId}/conteo`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn(`API /recomendaciones/${storeId}/conteo no disponible:`, err.message);
+  }
+  return null;
+}
+
+/**
  * Obtiene recomendaciones de la IA para una sucursal (GET /api/recomendaciones/:tienda?tipo=...)
  */
 export async function getStoreRecommendations(storeId, tipo = null) {
@@ -448,7 +468,7 @@ export async function getStoreRecommendations(storeId, tipo = null) {
     if (res.ok) {
       const json = await res.json();
       const list = json.data || json.datos;
-      if (Array.isArray(list) && list.length > 0) {
+      if (Array.isArray(list)) {
         return list.map(normalizeRecommendation);
       }
     }
