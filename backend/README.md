@@ -26,3 +26,19 @@ Copy the example environment file and populate values:
 cp .env.example .env
 ```
 Ensure valid PostgreSQL credentials and a valid `GEMINI_API_KEY` are provided before starting the server.
+
+## Puesta en marcha (Otzo)
+
+```bash
+cd backend
+npm install
+cp .env.example .env          # pon tu DATABASE_URL (local o Tiger)
+# copia los 14 CSV del hackathon a backend/db/datos/
+npm run db:limpiar            # corrige el dataset -> db/datos_limpios/ + reporte_calidad.md
+npm run db:cargar             # crea tablas (db/migrations/001_schema_otzo.sql) y carga ~1.3 M filas
+npm start                     # API en http://localhost:5000/api
+```
+
+- Los CSV no se suben al repo (reglas del hackathon); cada quien los copia en `backend/db/datos/`.
+- Endpoints: ver [`docs/api/README.md`](../docs/api/README.md). Tablas: ver [`docs/database/README.md`](../docs/database/README.md).
+- Requiere Node 18+. `npm run dev` (recarga automática) requiere Node 18.11+.

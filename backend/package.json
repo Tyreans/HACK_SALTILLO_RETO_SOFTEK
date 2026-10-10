@@ -1,0 +1,22 @@
+{
+  "name": "otzo-backend",
+  "version": "1.0.0",
+  "description": "API REST de Otzo – Tienda Inteligente (Express + PostgreSQL/Tiger)",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "db:limpiar": "node db/seeds/limpiar.js",
+    "db:cargar": "node db/seeds/cargar.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "pg": "^8.13.0",
+    "pg-copy-streams": "^6.0.6"
+  }
+}
