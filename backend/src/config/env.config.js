@@ -18,5 +18,6 @@ export const env = {
   geminiModel: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   elevenKey: process.env.ELEVENLABS_API_KEY,
   elevenVoice: process.env.ELEVENLABS_VOICE_ID,
+  adminKey: process.env.ADMIN_KEY,
   elevenModel: process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2",
 };
