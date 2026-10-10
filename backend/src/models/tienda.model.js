@@ -18,6 +18,16 @@ export async function listar({ region } = {}) {
   return rows;
 }
 
+export async function paraReposicion() {
+  const { rows } = await query(
+    `SELECT store_id
+       FROM stores
+      WHERE opened_date <= CURRENT_DATE AND (closed_date IS NULL OR closed_date > CURRENT_DATE)
+      ORDER BY store_id`
+  );
+  return rows;
+}
+
 export async function obtener(storeId) {
   const { rows } = await query(
     `SELECT ${COLUMNAS}

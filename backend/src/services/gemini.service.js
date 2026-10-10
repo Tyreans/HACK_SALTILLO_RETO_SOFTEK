@@ -16,7 +16,12 @@ export async function generar({ sistema, prompt, json = false }) {
       signal: AbortSignal.timeout(15000),
     }
   );
-  if (!r.ok) throw new ApiError(502, "Gemini no respondió");
+  if (!r.ok) {
+    // Deja ver en la consola del backend la causa real (clave inválida, modelo retirado, límite...)
+    const detalle = (await r.text().catch(() => "")).slice(0, 300);
+    console.error(`Gemini ${env.geminiModel} respondió ${r.status}: ${detalle}`);
+    throw new ApiError(502, `Gemini no respondió (${r.status})`);
+  }
   const data = await r.json();
   const texto = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   return json ? JSON.parse(texto) : texto.trim();

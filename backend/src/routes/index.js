@@ -74,7 +74,6 @@ router.get("/competencia/comparar/:tienda", Competencia.comparar);
 router.post("/competencia/precios", requiereClaveAdmin, Competencia.cargar);
 
 // Cajera: cada llamada gasta créditos, por eso el límite
-router.post("/chat", limiteIA, Asistente.chat);
 router.post("/voz", limiteIA, Asistente.hablar);
 
 export default router;
