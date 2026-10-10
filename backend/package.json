@@ -11,7 +11,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:limpiar": "node db/seeds/limpiar.js",
-    "db:cargar": "node db/seeds/cargar.js"
+    "db:cargar": "node db/seeds/cargar.js",
+    "db:competencia": "node db/seeds/competencia.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -35,10 +35,13 @@ Fechas en `YYYY-MM-DD`, tiendas como `S001`. Los datos van de 2025-10-01 a 2026-
 | GET | `/ventas/diarias` | `tienda`, `desde`, `hasta` | Serie diaria con feriados y venta con promo (default: últimos 30 días) |
 | GET | `/ventas/top-productos` | `tienda`, `desde`, `hasta`, `limite` | Productos más vendidos |
 | GET | `/promociones` | – | Cada promoción con unidades, venta y descuento otorgado vs. uplift esperado |
-| GET | `/recomendaciones/:tienda` | `regenerar=1` | Sugerencias del día del panel derecho (reposición, promoción, precio); ver sección *Recomendaciones, chat y voz* |
-| POST | `/recomendaciones/:id/aceptar` | `precio` (cuerpo, opcional) | Acepta la sugerencia; si es de precio, lo aplica en `prices` |
-| POST | `/recomendaciones/:id/rechazar` | – | Rechaza la sugerencia |
-| PATCH | `/recomendaciones/:id/precio` | `precio` (cuerpo) | Edita el precio propuesto antes de aceptar |
+| GET | `/recomendaciones/:tienda` | `tipo`, `regenerar=1` | Tabla de sugerencias del panel de IA (una fila por producto); ver sección *Panel de IA* |
+| POST | `/recomendaciones` | `tienda`, `tipo`, `sku`, valor (cuerpo) | Opción que agrega el gerente a mano |
+| PATCH | `/recomendaciones/:id` | `cantidad`, `descuento_pct` o `precio` (cuerpo) | Edita una sugerencia pendiente |
+| POST | `/recomendaciones/:id/aceptar` | valor opcional (cuerpo) | Acepta; crea la orden de compra o aplica el precio |
+| POST | `/recomendaciones/:id/rechazar` | `motivo` (cuerpo, opcional) | Rechaza; el agente no la repite en 7 días |
+| GET | `/competencia/precios` | `sku` | Último precio de cada competidor |
+| POST | `/competencia/precios` | header `x-admin-key` + `precios` (cuerpo) | Carga precios de la competencia |
 | POST | `/chat` | `tienda`, `mensaje` (cuerpo) | Respuesta corta de la cajera (Gemini) |
 | POST | `/voz` | `texto` (cuerpo) | Audio `audio/mpeg` (ElevenLabs) |
 
@@ -93,82 +96,132 @@ Una sola llamada para todo el panel izquierdo. El periodo son los últimos `dias
 
 ---
 
-## Recomendaciones, chat y voz (panel derecho y cajera)
+## Panel de IA: recomendaciones, competencia, chat y voz
 
-Mismo formato de respuesta que el resto (`{ success, data }`) y mismos errores (`{ success: false, error: { message } }`). Las rutas de este bloque **escriben datos o gastan créditos de IA**, así que tienen reglas extra (ver *Límite de peticiones* y *Variables de entorno*).
+Mismo formato de respuesta que el resto (`{ success, data, meta? }`) y mismos errores (`{ success: false, error: { message } }`). Las rutas de este bloque **escriben datos o gastan créditos de IA**, así que tienen reglas extra (ver *Límite de peticiones* y *Variables de entorno*).
 
 | Método | Ruta | Cuerpo / parámetros | Devuelve |
 |---|---|---|---|
-| GET | `/recomendaciones/:tienda` | `regenerar=1` (opcional) | Las sugerencias del día para la tienda (reposición, promoción, cambio de precio) |
-| POST | `/recomendaciones/:id/aceptar` | `{ "precio": 2.75 }` (opcional) | La recomendación en estado `aceptada`. Si es de precio, aplica el precio en `prices` |
-| POST | `/recomendaciones/:id/rechazar` | – | La recomendación en estado `rechazada` |
-| PATCH | `/recomendaciones/:id/precio` | `{ "precio": 2.75 }` | La recomendación con el nuevo `precio_propuesto` (sigue `pendiente`) |
-| POST | `/chat` | `{ "tienda": "S001", "mensaje": "..." }` | `{ "respuesta": "..." }` generada con Gemini |
-| POST | `/voz` | `{ "texto": "..." }` | Audio **`audio/mpeg`** (no JSON) generado con ElevenLabs |
+| GET | `/recomendaciones/:tienda` | `tipo` (`reposicion`, `promocion`, `precio`), `regenerar=1` | La **tabla** de ese tipo: una fila por producto. Sin `tipo`, solo lo que ya existe hoy (para los contadores de los botones) |
+| POST | `/recomendaciones` | `{ tienda, tipo, sku, cantidad \| descuento_pct \| precio, motivo? }` | `201` con la fila que agrega el gerente a mano |
+| PATCH | `/recomendaciones/:id` | `{ cantidad }`, `{ descuento_pct }` o `{ precio }` según el tipo | La fila editada (sigue `pendiente`) |
+| POST | `/recomendaciones/:id/aceptar` | Opcional: los mismos campos de editar | La fila `aceptada`, con su efecto real (ver abajo) |
+| POST | `/recomendaciones/:id/rechazar` | Opcional: `{ motivo }` | La fila `rechazada` |
+| GET | `/competencia/precios` | `sku` (opcional) | Último precio de cada competidor |
+| POST | `/competencia/precios` | Header `x-admin-key` + `{ precios: [...] }` | Cuántos precios se guardaron |
+| POST | `/chat` | `{ tienda, mensaje }` | `{ respuesta }` generada con Gemini |
+| POST | `/voz` | `{ texto }` | Audio **`audio/mpeg`** (no JSON) generado con ElevenLabs |
 
-### `GET /api/recomendaciones/:tienda`
+### Cómo funciona el panel: 3 botones, 3 tablas
 
-Devuelve las recomendaciones **del día** de la tienda (hasta 3, ordenadas por prioridad). La primera llamada del día las genera y las guarda; las siguientes devuelven las mismas sin gastar Gemini, incluso ya aceptadas o rechazadas, para que el front muestre su estado. Con `?regenerar=1` se descartan las pendientes y se generan de nuevo.
+Cada botón del panel izquierdo (Re-Stock, Promociones, Cambio de precios) abre una tabla con `GET /api/recomendaciones/:tienda?tipo=...`.
 
-Cómo se generan:
-- **Reposición:** productos con `estado` `bajo` o `sin_stock` en el inventario (los mismos del dashboard).
-- **Promoción:** los productos de peores ventas de los últimos 7 días.
-- **Precio:** se propone al peor vendedor un precio **15 % menor**, sin bajar nunca de **costo + 10 %**. Si no hay forma de bajarlo respetando ese margen, no se genera la tarjeta de precio.
-- Los productos y cifras salen siempre de la base de datos. Gemini solo redacta `descripcion` y decide `prioridad`; si falla o contesta algo inválido, se usa un texto de respaldo y el endpoint responde igual.
+- La **primera llamada del día** para una tienda y un tipo calcula las sugerencias y las guarda; las siguientes devuelven lo mismo, ya sea pendiente, aceptado o rechazado, para que la tabla muestre el estado. Con `?regenerar=1` se descartan las pendientes del agente y se calculan de nuevo (tiene límite de peticiones).
+- Cada tabla trae **hasta 8 filas**, ordenadas por prioridad, más las opciones que el gerente agregó a mano y dejó pendientes.
+- Una tienda sin datos devuelve la tabla vacía (`data: []`), no un error.
+- **Los productos y las cifras salen de la base de datos con fórmulas; Gemini solo redacta el motivo** de cada fila. Si Gemini falla o contesta algo inválido, se usa el texto de la regla y el endpoint responde igual.
+
+Reglas (ventana de los últimos 7 días hasta el último día con datos):
+
+| Tipo | Qué propone | Cómo se calcula |
+|---|---|---|
+| `reposicion` | `cantidad` de piezas a pedir | `venta_diaria × (días de entrega + colchón) × 1.2 − existencia − en camino`. El colchón es 1 día en perecederos y 3 en el resto. Se redondea hacia arriba a cajas completas (`case_size`). En perecederos no se pide más de lo que se alcanza a vender en su vida útil. Prioridad `alta` si la existencia no cubre el tiempo de entrega |
+| `promocion` | `descuento_pct` | Perecederos con merma ≥ 10 % de lo disponible (30 % de descuento si la merma es ≥ 25 %, 20 % si no) o con mucha existencia para su vida útil; el resto, con inventario para 10 días o más (10 %) o 21 días o más (15 %). Nunca baja el precio de costo + 5 % |
+| `precio` | `precio_propuesto` | Compara con el promedio de la competencia (últimos 30 días). Si cuesta más de 5 % arriba, baja al promedio sin pasar de costo + 15 %. Si cuesta más de 10 % abajo y el producto se vende, sube a 97 % del promedio. Si ningún producto de la tienda tiene precio de competencia, propone −10 % a los de peor venta y lo dice en el motivo |
+
+### Qué aprende el agente de las decisiones del gerente
+
+- **Rechazar:** el producto no se vuelve a sugerir de ese tipo durante 7 días. El `motivo` queda guardado.
+- **Editar y aceptar:** si el gerente suele aceptar menos que lo propuesto (por ejemplo 24 en lugar de 42), las siguientes sugerencias de ese producto se ajustan al promedio de sus últimas 3 aceptaciones (entre 0.3× y 1.5× para cantidad, y entre 0.5× y 1.5× para descuento).
+- **Aceptado hoy o pendiente a mano:** tampoco se vuelve a sugerir.
+- Cada decisión se reporta además a `backend/src/services/memoria.service.js` (`registrarDecision`), que está **vacío a propósito**: ahí se conecta Backboard. La misma función `contexto` devuelve lo que el agente recuerda para incluirlo en el prompt de Gemini.
+
+### Qué pasa al aceptar
+
+| Tipo | Efecto |
+|---|---|
+| `reposicion` | Crea una orden de compra `In transit` en `purchase_orders` con la cantidad final, el proveedor del producto y la fecha esperada según su tiempo de entrega |
+| `precio` | Cierra el precio vigente en `prices` (`effective_to` = ayer) y abre uno nuevo desde hoy con `price_list = 'otzo-web'` |
+| `promocion` | Solo queda registrada como aceptada: las promociones del dataset son por categoría, no por producto |
+
+Todo ocurre en una transacción. Una recomendación ya resuelta no se puede volver a aceptar, rechazar ni editar (`409`).
+
+### Una fila de la tabla
 
 ```jsonc
-// GET /api/recomendaciones/S001
+// GET /api/recomendaciones/S001?tipo=precio
 {
   "success": true,
   "data": [
-    { "id": 12, "store_id": "S001", "tipo": "reposicion", "prioridad": "alta",
-      "titulo": "Reposición", "descripcion": "Reponer café espresso y aguacates antes del fin de semana.",
-      "sku": null, "precio_actual": null, "precio_propuesto": null,
-      "estado": "pendiente", "creada_en": "2026-10-10T15:02:11.000Z", "resuelta_en": null },
-    { "id": 13, "store_id": "S001", "tipo": "promocion", "prioridad": "media",
-      "titulo": "Promociones", "descripcion": "Ofrecer descuento en té de jazmín y pan de centeno para impulsar rotación.",
-      "sku": null, "precio_actual": null, "precio_propuesto": null,
-      "estado": "pendiente", "creada_en": "2026-10-10T15:02:11.000Z", "resuelta_en": null },
-    { "id": 14, "store_id": "S001", "tipo": "precio", "prioridad": "baja",
-      "titulo": "Cambio de precios", "descripcion": "Revisar precio de batido de plátano para mantener margen sin perder competitividad.",
-      "sku": "SKU-100694", "precio_actual": 3.5, "precio_propuesto": 2.98,
-      "estado": "pendiente", "creada_en": "2026-10-10T15:02:11.000Z", "resuelta_en": null }
-  ]
+    { "id": 10, "store_id": "S001", "tipo": "precio", "prioridad": "alta",
+      "sku": "SKU-3", "producto": "Batido de plátano",
+      "descripcion": "Cuesta 21 % más que el promedio de la competencia ($2.9).",
+      "origen": "agente", "estado": "pendiente", "editada": false,
+      "cantidad": null, "descuento_pct": null,
+      "precio_actual": 3.5, "precio_propuesto": 2.9,
+      "competencia": { "promedio": 2.9, "minimo": 2.8, "competidores": 3 },
+      "motivo_rechazo": null,
+      "propuesta_original": { "cantidad": null, "descuento_pct": null, "precio_propuesto": 2.9 },
+      "creada_en": "2026-10-10T15:02:11.000Z", "resuelta_en": null }
+  ],
+  "meta": { "total": 1 }
 }
 ```
 
 | Campo | Valores |
 |---|---|
 | `tipo` | `reposicion`, `promocion`, `precio` |
-| `prioridad` | `alta`, `media`, `baja` (la etiqueta de color de cada tarjeta) |
+| `prioridad` | `alta`, `media`, `baja` (el color de la etiqueta) |
 | `estado` | `pendiente`, `aceptada`, `rechazada` |
-| `sku`, `precio_actual`, `precio_propuesto` | Solo vienen en `tipo: "precio"`; en las demás son `null` |
+| `origen` | `agente` (lo sugirió la IA) o `gerente` (lo agregó él) |
+| `editada` | `true` si el gerente cambió el valor que propuso el agente |
+| `cantidad` | Solo en `reposicion` |
+| `descuento_pct`, `precio_actual` | `descuento_pct` solo en `promocion`; `precio_actual` en `promocion` y `precio` |
+| `precio_propuesto`, `competencia` | Solo en `precio` |
+| `propuesta_original` | Lo que propuso el agente, antes de que el gerente lo editara |
 
-### Botones de la tarjeta de precio
+### Botones de la tabla
 
 | Botón del front | Llamada |
 |---|---|
 | **Aceptar** | `POST /api/recomendaciones/:id/aceptar` |
-| **Editar precio** | `PATCH /api/recomendaciones/:id/precio` con `{ "precio": 2.75 }`; después **Aceptar** |
-| **Rechazar** | `POST /api/recomendaciones/:id/rechazar` |
+| **Editar** | `PATCH /api/recomendaciones/:id` con el campo del tipo; después **Aceptar** (o `aceptar` con ese mismo campo para hacerlo en una llamada) |
+| **Rechazar** | `POST /api/recomendaciones/:id/rechazar` con `{ "motivo": "..." }` opcional |
+| **Agregar opción** | `POST /api/recomendaciones` |
 
-- `aceptar` en una recomendación de **precio** cierra el precio vigente en la tabla `prices` (`effective_to` = ayer) y crea uno nuevo desde hoy con `price_list = 'otzo-web'`. Todo ocurre en una transacción. También acepta `{ "precio": 2.75 }` para editar y aceptar en una sola llamada.
-- `aceptar` en reposición o promoción solo cambia el estado a `aceptada`; no modifica nada más.
-- Una recomendación ya resuelta no se puede volver a aceptar, rechazar ni editar (`409`).
-- `precio` debe ser un número mayor que 0 y hasta 100000; se redondea a 2 decimales.
+Cada tipo solo admite su campo: `cantidad` en `reposicion`, `descuento_pct` en `promocion`, `precio` en `precio`. Cualquier otro devuelve `400`. Rangos: `cantidad` entero de 1 a 100000, `descuento_pct` de 1 a 90, `precio` de 0.01 a 100000. `PATCH /recomendaciones/:id/precio` sigue existiendo como alias de la versión anterior.
 
 ```js
-// Aceptar el precio propuesto
-await fetch(`${API}/recomendaciones/${id}/aceptar`, { method: "POST" });
-
-// Editar y luego aceptar
-await fetch(`${API}/recomendaciones/${id}/precio`, {
-  method: "PATCH",
+// Agregar a mano un re-stock que el agente no sugirió
+await fetch(`${API}/recomendaciones`, {
+  method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ precio: 2.75 }),
+  body: JSON.stringify({ tienda: "S001", tipo: "reposicion", sku: "SKU-4", cantidad: 24, motivo: "Evento el viernes" }),
 });
-await fetch(`${API}/recomendaciones/${id}/aceptar`, { method: "POST" });
+
+// Editar la cantidad y aceptar en una sola llamada
+await fetch(`${API}/recomendaciones/${id}/aceptar`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ cantidad: 24 }),
+});
 ```
+
+Agregar una opción para un producto que ya tiene una pendiente del mismo tipo devuelve `409`.
+
+### Precios de la competencia
+
+La tabla `precios_competencia` la llena un script o un servicio externo; el panel de precios solo lee.
+
+```bash
+# Precios de EJEMPLO (inventados, fuente = 'demo') para probar el panel
+npm run db:competencia -- --demo
+
+# Un archivo propio: [{ "sku": "...", "competidor": "...", "precio": 2.9, "fecha"?: "2026-10-10", "fuente"?: "scraper" }]
+npm run db:competencia -- precios.json
+```
+
+También se pueden cargar por HTTP con `POST /api/competencia/precios` (máximo 1000 por petición). Pide el header `x-admin-key` con el valor de `ADMIN_KEY`; sin esa variable en el servidor, el endpoint responde `503`. Los SKU que no existen en el catálogo se ignoran y se reportan en `ignorados`. Guardar el mismo `sku` + `competidor` + `fecha` actualiza el precio.
 
 ### `POST /api/chat`
 
@@ -204,20 +257,21 @@ new Audio(URL.createObjectURL(await res.blob())).play();
 
 ### Límite de peticiones
 
-`/chat` y `/voz` permiten **10 peticiones por minuto por IP**. Al excederlo responden `429`. El contador está en memoria, así que se reinicia con el servidor. Detrás de Caddy funciona porque `app.js` tiene `app.set("trust proxy", 1)`; sin eso todas las peticiones parecerían venir de la misma IP.
+`/chat`, `/voz` y `GET /recomendaciones/:tienda?regenerar=1` permiten **10 peticiones por minuto por IP** (comparten contador). Al excederlo responden `429`. El contador está en memoria, así que se reinicia con el servidor. Detrás de Caddy funciona porque `app.js` tiene `app.set("trust proxy", 1)`; sin eso todas las peticiones parecerían venir de la misma IP.
 
 ### Errores
 
 | Código | Cuándo |
 |---|---|
-| `400` | Falta o es inválida la tienda, el `id`, el `precio`, el `mensaje` o el `texto` (largo fuera de rango); editar el precio de una recomendación que no es de precio |
-| `404` | La tienda o la recomendación no existen |
-| `409` | La recomendación ya fue aceptada o rechazada |
-| `429` | Más de 10 peticiones por minuto en `/chat` o `/voz` |
+| `400` | Falta o es inválido el `tipo`, la tienda, el `id`, un valor numérico fuera de rango, el `mensaje` o el `texto`; un campo que no corresponde al tipo de la recomendación (por ejemplo `precio` en un re-stock) |
+| `401` | `x-admin-key` incorrecta en `POST /competencia/precios` |
+| `404` | La tienda, el producto o la recomendación no existen |
+| `409` | La recomendación ya fue resuelta, o ya hay una pendiente de ese tipo para ese producto |
+| `429` | Más de 10 peticiones por minuto en `/chat`, `/voz` o `GET /recomendaciones/:tienda?regenerar=1` (comparten el mismo contador por IP) |
 | `502` | Gemini o ElevenLabs no respondieron |
-| `503` | Falta configurar la llave de Gemini o de ElevenLabs |
+| `503` | Falta la llave de ElevenLabs (`/voz`) o de Gemini (`/chat`); o falta `ADMIN_KEY` para cargar precios |
 
-`GET /recomendaciones/:tienda` no falla si Gemini cae: devuelve el texto de respaldo.
+`GET /recomendaciones/:tienda` no falla si Gemini cae: devuelve el texto de la regla.
 
 ### Variables de entorno (`backend/.env`)
 
@@ -228,13 +282,15 @@ new Audio(URL.createObjectURL(await res.blob())).play();
 | `ELEVENLABS_API_KEY` | Llave de ElevenLabs (voz) |
 | `ELEVENLABS_VOICE_ID` | Id de la voz de la cajera |
 | `ELEVENLABS_MODEL` | Opcional; por defecto `eleven_multilingual_v2` |
+| `ADMIN_KEY` | Clave para cargar precios de la competencia por HTTP (opcional si se usa el script) |
 
 Las llaves viven solo en el backend. El frontend nunca debe llamar directo a Gemini ni a ElevenLabs.
 
 ### Base de datos
 
-La tabla `recomendaciones` se crea con `backend/db/migrations/002_recomendaciones.sql`. Hay que correrla una vez en cada base (local y Tiger Cloud).
+Dos migraciones, en orden, una vez por base (local y Tiger Cloud). La 003 se puede volver a correr y borra las tarjetas del formato anterior (las que no tenían producto).
 
 ```bash
 psql "$DATABASE_URL" -f backend/db/migrations/002_recomendaciones.sql
+psql "$DATABASE_URL" -f backend/db/migrations/003_recomendaciones_tablas.sql
 ```
