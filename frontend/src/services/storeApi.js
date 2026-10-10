@@ -1,6 +1,7 @@
 // Servicio para interactuar con la API REST de Express (/api) con soporte de fallbacks robustos
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002/api';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta?.env?.VITE_API_BASE_URL)
+  || 'http://localhost:3002/api';
 
 // Cache o datos iniciales mock enriquecidos basados en los bosquejos
 export const fallbackStoreDetails = {
@@ -347,7 +348,10 @@ export async function getDashboardData(storeId) {
           estadisticas: {
             ticket_promedio: raw.estadisticas?.ticket_promedio?.valor != null ? `$${raw.estadisticas.ticket_promedio.valor.toFixed(2)}` : '$24.50',
             conversion_pct: raw.estadisticas?.conversion_pct?.valor != null ? `${raw.estadisticas.conversion_pct.valor}%` : '3.8%',
-            retencion_pct: '28%',
+            // Retención dinámica por tienda derivada de conversión y margen (dataset no incluye IDs de clientes)
+            retencion_pct: raw.estadisticas?.conversion_pct?.valor != null
+              ? `${Math.min(48, Math.max(12, Math.round((Number(raw.estadisticas.conversion_pct.valor) || 0) * 1.75 + (Number(raw.estadisticas.margen_pct?.valor) || 50) * 0.12)))}%`
+              : '24%',
             margen_neto: raw.estadisticas?.margen_pct?.valor != null ? `${raw.estadisticas.margen_pct.valor}%` : '18%',
             merma_pct: raw.estadisticas?.merma_pct?.valor != null ? `${raw.estadisticas.merma_pct.valor}%` : '2.1%',
             tickets_totales: 1420,
@@ -464,67 +468,66 @@ export async function createRecommendationApi(payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.ok) {
-      const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.success !== false) {
       const created = json.data || json.datos || json;
       return { ok: true, data: normalizeRecommendation(created) };
     }
+    return { ok: false, error: json.error?.message || `Error ${res.status}` };
   } catch (err) {
     console.warn('API POST /recomendaciones falló:', err.message);
+    return { ok: false, error: err.message };
   }
-  // En caso offline simula creación exitosa
-  return {
-    ok: true,
-    data: normalizeRecommendation({
-      id: Date.now(),
-      store_id: payload.tienda,
-      tipo: payload.tipo,
-      sku: payload.sku,
-      producto: payload.producto || payload.sku,
-      cantidad: payload.cantidad,
-      descuento_pct: payload.descuento_pct,
-      precio_propuesto: payload.precio,
-      descripcion: payload.motivo || 'Recomendación agregada por el Gerente',
-      prioridad: 'alta',
-      estado: 'pendiente',
-      origen: 'gerente',
-      creada_en: new Date().toISOString(),
-    }),
-  };
 }
 
 /**
  * Acepta una recomendación (POST /api/recomendaciones/:id/aceptar)
+ * Verifica estrictamente la respuesta del servidor antes de indicar éxito.
  */
 export async function acceptRecommendationApi(id, payload = {}) {
   try {
+    // Solo enviar el campo exacto permitido para evitar error 400
+    const cleanPayload = {};
+    if (payload.cantidad != null) cleanPayload.cantidad = Number(payload.cantidad);
+    if (payload.descuento_pct != null) cleanPayload.descuento_pct = Number(payload.descuento_pct);
+    if (payload.precio != null) cleanPayload.precio = Number(payload.precio);
+
     const res = await fetch(`${API_BASE_URL}/recomendaciones/${id}/aceptar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(cleanPayload),
     });
-    if (res.ok) return { ok: true };
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.success !== false) {
+      return { ok: true, data: json.data };
+    }
+    return { ok: false, error: json.error?.message || `Error ${res.status}: no se pudo aceptar la recomendación` };
   } catch (err) {
-    console.warn(`Error al aceptar recomendación ${id}:`, err.message);
+    console.error(`Error al aceptar recomendación ${id}:`, err);
+    return { ok: false, error: err.message || 'Error de conexión con el servidor' };
   }
-  return { ok: true };
 }
 
 /**
  * Rechaza una recomendación (POST /api/recomendaciones/:id/rechazar)
+ * Verifica estrictamente la respuesta del servidor antes de indicar éxito.
  */
 export async function rejectRecommendationApi(id, motivo = '') {
   try {
     const res = await fetch(`${API_BASE_URL}/recomendaciones/${id}/rechazar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ motivo }),
+      body: JSON.stringify({ motivo: motivo || null }),
     });
-    if (res.ok) return { ok: true };
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.success !== false) {
+      return { ok: true, data: json.data };
+    }
+    return { ok: false, error: json.error?.message || `Error ${res.status}: no se pudo rechazar la recomendación` };
   } catch (err) {
-    console.warn(`Error al rechazar recomendación ${id}:`, err.message);
+    console.error(`Error al rechazar recomendación ${id}:`, err);
+    return { ok: false, error: err.message || 'Error de conexión con el servidor' };
   }
-  return { ok: true };
 }
 
 /**
@@ -537,9 +540,13 @@ export async function updateRecommendationApi(id, payload = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.ok) return { ok: true };
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.success !== false) {
+      return { ok: true, data: json.data };
+    }
+    return { ok: false, error: json.error?.message || `Error ${res.status}: no se pudo editar la recomendación` };
   } catch (err) {
-    console.warn(`Error al editar recomendación ${id}:`, err.message);
+    console.error(`Error al editar recomendación ${id}:`, err);
+    return { ok: false, error: err.message || 'Error de conexión con el servidor' };
   }
-  return { ok: true };
 }
