@@ -1,0 +1,15 @@
+# Frontend (Vite + React) servido por Caddy, que además hace de proxy a la API.
+FROM node:20-alpine AS build
+
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+# Mismo origen: Caddy manda /api/* al contenedor api
+ENV VITE_API_BASE_URL=/api
+RUN npm run build
+
+FROM caddy:2-alpine
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv

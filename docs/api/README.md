@@ -223,6 +223,39 @@ npm run db:competencia -- precios.json
 
 También se pueden cargar por HTTP con `POST /api/competencia/precios` (máximo 1000 por petición). Pide el header `x-admin-key` con el valor de `ADMIN_KEY`; sin esa variable en el servidor, el endpoint responde `503`. Los SKU que no existen en el catálogo se ignoran y se reportan en `ignorados`. Guardar el mismo `sku` + `competidor` + `fecha` actualiza el precio.
 
+### Generación programada (cron en el servidor)
+
+Por defecto las sugerencias se calculan la primera vez que alguien abre una tabla cada día. Para tenerlas listas antes (y que el primer clic no espere a Gemini), hay un script que recorre todas las tiendas y tipos:
+
+```bash
+npm run recomendaciones:generar                         # todas las tiendas y los 3 tipos
+npm run recomendaciones:generar -- --tienda=S001        # una tienda
+npm run recomendaciones:generar -- --tipo=reposicion    # un tipo
+npm run recomendaciones:generar -- --regenerar          # descarta las pendientes del agente y recalcula
+```
+
+- Sin `--regenerar` solo calcula lo que hoy aún no existe: se puede correr varias veces sin gastar Gemini de más ni pisar lo que el gerente ya editó.
+- Con `--regenerar` se pierden las **ediciones del gerente en filas pendientes**, así que no lo pongan en `cron`.
+- Hace una pausa entre llamadas que usaron Gemini (`GEMINI_PAUSA_MS`, 1500 por defecto). Termina con código `1` si alguna falló, para que se note en los logs.
+- Con las tiendas actuales son como máximo 3 llamadas a Gemini por tienda (114 en total con 38 tiendas).
+
+`npm run recomendaciones:reposicion` es otro proceso: primero exporta las órdenes de compra pendientes y luego **regenera** `reposicion` y `promocion` en todas las tiendas (siempre con regenerar, así que descarta las pendientes del agente, incluidas las ediciones del gerente).
+
+En el servidor, con Docker, los dos corren dentro del contenedor `api` (ya tiene `backend/.env`). Edita el `crontab` de root con `sudo crontab -e`:
+
+```cron
+# 11:30 UTC: exporta órdenes y regenera reposición y promoción
+30 11 * * * cd /opt/otzo && flock -n /tmp/otzo-recomendaciones.lock docker compose exec -T api npm run -s recomendaciones:reposicion >> /var/log/otzo-recomendaciones.log 2>&1
+# 12:00 UTC (6:00 am en Saltillo): completa lo que falte del día (en la práctica, precio)
+0 12 * * * cd /opt/otzo && flock -n /tmp/otzo-recomendaciones.lock docker compose exec -T api npm run -s recomendaciones:generar >> /var/log/otzo-recomendaciones.log 2>&1
+```
+
+- `-T` es obligatorio: `cron` no tiene terminal.
+- `flock -n` evita que dos corridas se encimen: si la de las 11:30 sigue corriendo a las 12:00, la de las 12:00 se salta ese día.
+- El orden importa: si `reposicion` corriera después, volvería a borrar lo pendiente de esos dos tipos.
+- El servidor y la base de datos (Tiger Cloud) están en **UTC**, y el "día" de las recomendaciones cambia a las 00:00 UTC (6:00 pm en Saltillo). Si presentan después de esa hora, la primera apertura de cada tabla recalculará.
+- Para probarlo sin esperar: `docker compose exec -T api npm run recomendaciones:generar` y revisar `tail /var/log/otzo-recomendaciones.log`.
+
 ### `POST /api/chat`
 
 La cajera responde sobre la tienda usando el resumen del dashboard (últimos 7 días) como contexto. La respuesta es corta (máximo 2 frases) porque está pensada para leerse en voz alta.

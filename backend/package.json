@@ -15,7 +15,7 @@
     "db:competencia": "node db/seeds/competencia.js",
     "db:rivales": "node db/seeds/rivales.js",
     "db:migrar-backboard": "node scripts/migrar-backboard.js",
-    "recomendaciones:generar": "node scripts/generar-reposiciones.js",
+    "recomendaciones:generar": "node scripts/generar-recomendaciones.js",
     "recomendaciones:reposicion": "node scripts/generar-reposiciones.js"
   },
   "dependencies": {

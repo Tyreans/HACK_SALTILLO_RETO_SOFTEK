@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: backend/.env
+    environment:
+      # Gana sobre backend/.env: tiene que coincidir con reverse_proxy api:5000 del Caddyfile
+      PORT: "5000"
+    restart: unless-stopped
+    # Sin "ports": solo es accesible desde web (Caddy) por la red interna
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en el .env de la raíz}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

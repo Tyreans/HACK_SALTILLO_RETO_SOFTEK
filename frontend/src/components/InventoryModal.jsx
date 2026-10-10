@@ -57,7 +57,7 @@ export default function InventoryModal({
 
     try {
       const lowStockNames = inventory.filter((i) => i.is_low).map((i) => i.name).join(', ');
-      const res = await fetch(`http://localhost:3002/api/chat`, {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

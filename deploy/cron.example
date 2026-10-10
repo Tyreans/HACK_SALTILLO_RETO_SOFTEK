@@ -1,0 +1,9 @@
+# Instalar con: sudo crontab -e  (y pegar las dos líneas de abajo, en este orden)
+# -T es obligatorio: cron no tiene terminal. Las dos comparten el mismo lock para no encimarse.
+
+# 11:30 UTC: exporta órdenes de compra pendientes y regenera reposición y promoción.
+# OJO: siempre regenera, descarta las pendientes del agente (incluidas ediciones del gerente).
+30 11 * * * cd /opt/otzo && flock -n /tmp/otzo-recomendaciones.lock docker compose exec -T api npm run -s recomendaciones:reposicion >> /var/log/otzo-recomendaciones.log 2>&1
+
+# 12:00 UTC = 6:00 am en Saltillo: genera lo que falte del día para todas las tiendas (sin --regenerar).
+0 12 * * * cd /opt/otzo && flock -n /tmp/otzo-recomendaciones.lock docker compose exec -T api npm run -s recomendaciones:generar >> /var/log/otzo-recomendaciones.log 2>&1
