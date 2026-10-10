@@ -5,10 +5,7 @@ import * as Productos from "../controllers/producto.controller.js";
 import * as Inventario from "../controllers/inventario.controller.js";
 import * as Ventas from "../controllers/venta.controller.js";
 import * as Dashboard from "../controllers/dashboard.controller.js";
-import * as Recs from "../controllers/recomendacion.controller.js";
-import * as Asistente from "../controllers/asistente.controller.js";
-import * as Competencia from "../controllers/competencia.controller.js";
-import { limitar, limitarSi, requiereClaveAdmin } from "../middlewares/rateLimit.middleware.js";
+import chatRoutes from "./chat.routes.js";
 import { asyncHandler, ok } from "../utils/apiResponse.js";
 
 const router = Router();
@@ -31,6 +28,9 @@ router.get("/health", asyncHandler(async (req, res) => {
 
 // Dashboard (panel izquierdo: mejores, peores, estadísticas, inventario)
 router.get("/dashboard/:tienda", Dashboard.resumen);
+
+// Chat
+router.use("/chat", chatRoutes);
 
 // Tiendas
 router.get("/tiendas", Tiendas.listar);

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asistente de tienda</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; }
+    header { background: #1a73e8; color: white; padding: 1rem; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    #chat-container { flex: 1; display: flex; flex-direction: column; max-width: 800px; width: 100%; margin: 0 auto; padding: 1rem; }
+    #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+    .message { max-width: 80%; padding: 0.75rem 1rem; border-radius: 1rem; animation: fadeIn 0.3s ease; }
+    .message.user { align-self: flex-end; background: #1a73e8; color: white; border-bottom-right-radius: 0.25rem; }
+    .message.bot { align-self: flex-start; background: white; color: #333; border: 1px solid #e0e0e0; border-bottom-left-radius: 0.25rem; }
+    .message.error { align-self: center; background: #fce8e6; color: #d93025; border: 1px solid #fad2cf; max-width: 90%; font-size: 0.9rem; }
+    .message.error .retry-btn { margin-top: 0.5rem; padding: 0.4rem 0.8rem; background: #d93025; color: white; border: none; border-radius: 0.5rem; font-size: 0.8rem; cursor: pointer; }
+    .message.error .retry-btn:hover { background: #b3261e; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    #input-form { display: flex; gap: 0.5rem; padding: 1rem; background: white; border-top: 1px solid #e0e0e0; }
+    #message-input { flex: 1; padding: 0.75rem 1rem; border: 1px solid #ddd; border-radius: 2rem; font-size: 1rem; outline: none; }
+    #message-input:focus { border-color: #1a73e8; }
+    #message-input:disabled { background: #f5f5f5; }
+    #send-btn { background: #1a73e8; color: white; border: none; border-radius: 50%; width: 48px; height: 48px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; flex-shrink: 0; }
+    #send-btn:hover:not(:disabled) { background: #1557b0; }
+    #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .send-icon { display: block; }
+    .loading-icon { display: none; }
+    #send-btn.loading .send-icon { display: none; }
+    #send-btn.loading .loading-icon { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Asistente de tienda</h1>
+  </header>
+  <div id="chat-container">
+    <div id="messages"></div>
+    <form id="input-form">
+      <input type="text" id="message-input" placeholder="Escribe un mensaje..." autocomplete="off" required>
+      <button type="submit" id="send-btn" aria-label="Enviar">
+        <svg class="send-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+        <svg class="loading-icon" width="24" height="24" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round">
+            <animateTransform attributeName="transform" type="rotate" dur="1s" from="0 12 12" to="360 12 12" repeatCount="indefinite"/>
+          </circle>
+        </svg>
+      </button>
+    </form>
+  </div>
+  <script>
+    const messagesEl = document.getElementById('messages');
+    const form = document.getElementById('input-form');
+    const input = document.getElementById('message-input');
+    const sendBtn = document.getElementById('send-btn');
+    let sessionId = null;
+    let isLoading = false;
+    let lastUserMessage = null;
+
+    const ERROR_MESSAGES = {
+      RATE_LIMIT: 'Estoy recibiendo muchas solicitudes. Intenta de nuevo en unos segundos.',
+      BUSY: 'El asistente está con alta demanda en este momento. Intenta de nuevo en un momento.',
+      CONFIG: 'El asistente no está disponible por un problema interno.',
+      BAD_REQUEST: 'No pude procesar ese mensaje. Intenta reformularlo.',
+      TOO_LONG: 'El mensaje es demasiado largo (máx. 4000 caracteres).',
+      EMPTY: 'Escribe un mensaje.',
+      BAD_JSON: 'Solicitud inválida.',
+      UNKNOWN: 'Ocurrió un error inesperado. Intenta de nuevo.',
+    };
+
+    const RETRYABLE_CODES = new Set(['RATE_LIMIT', 'BUSY']);
+
+    function addMessage(text, isUser, isError = false, errorCode = null) {
+      const div = document.createElement('div');
+      div.className = `message ${isUser ? 'user' : 'bot'}${isError ? ' error' : ''}`;
+      if (isError && errorCode && RETRYABLE_CODES.has(errorCode)) {
+        div.innerHTML = `${escapeHtml(text)}<br><button class="retry-btn" data-retry>Reintentar</button>`;
+        div.querySelector('[data-retry]').addEventListener('click', () => {
+          div.remove();
+          sendMessage(lastUserMessage);
+        });
+      } else {
+        div.textContent = text;
+      }
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showLoading() {
+      const div = document.createElement('div');
+      div.className = 'message bot';
+      div.innerHTML = '<span class="loading"></span>';
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    function setLoadingState(loading) {
+      isLoading = loading;
+      sendBtn.disabled = loading;
+      input.disabled = loading;
+      sendBtn.classList.toggle('loading', loading);
+      if (!loading) input.focus();
+    }
+
+    async function sendMessage(text) {
+      if (isLoading) return;
+      lastUserMessage = text;
+      setLoadingState(true);
+
+      addMessage(text, true);
+      const loadingEl = showLoading();
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, sessionId })
+        });
+
+        const data = await res.json();
+        loadingEl.remove();
+
+        if (data.error) {
+          const msg = ERROR_MESSAGES[data.code] || data.error;
+          addMessage(msg, false, true, data.code);
+        } else {
+          addMessage(data.response, false);
+          sessionId = data.sessionId;
+        }
+      } catch (err) {
+        loadingEl.remove();
+        addMessage('Error de conexión. Verifica tu internet e intenta de nuevo.', false, true, 'UNKNOWN');
+      } finally {
+        setLoadingState(false);
+      }
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (text) {
+        input.value = '';
+        sendMessage(text);
+      }
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.dispatchEvent(new Event('submit'));
+      }
+    });
+  </script>
+</body>
+</html>
